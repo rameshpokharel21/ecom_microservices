@@ -1,8 +1,10 @@
-# ecom_micrservices
+# ecom_microservices
 
 ---
+- Install docker desktop in your machine
 
 ## Environment variables
+- create .env file with following in the project root: 
 ```
 # Shared Postgresql container credentials
 POSTGRES_USER=user
