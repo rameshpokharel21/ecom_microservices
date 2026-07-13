@@ -1,0 +1,23 @@
+server:
+  port: 8082
+
+spring:
+  application:
+    name: user-service
+
+  mongodb:
+#    host: ${MONGO_HOST}
+#    port: ${MONGO_PORT}
+#    database: ${MONGO_DB}
+#    username: ${MONGO_USERNAME}
+#    password: ${MONGO_PASSWORD}
+#    authentication-database: admin
+    uri: ${SPRING_DATA_MONGODB_URI}
+logging:
+  level:
+    root: INFO
+    org.springframework.data.mongodb.core: DEBUG
+    org.springframework.boot.autoconfigure: DEBUG
+
+
+
