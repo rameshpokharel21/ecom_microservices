@@ -32,4 +32,8 @@ PGADMIN_DEFAULT_EMAIL=admin@admin.com
 PGADMIN_DEFAULT_PASSWORD=admin
 
 ```
----
+- It has services like user-service, product-service, order-service
+- With Docker-compose.yml also installs postgresql, mongodb, pgadmin
+- `docker compose up -d` starts all services
+- `docker compose down -v` stops and deletes all containers with volumes.
+
