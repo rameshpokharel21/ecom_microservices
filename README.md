@@ -37,3 +37,39 @@ PGADMIN_DEFAULT_PASSWORD=admin
 - `docker compose up -d` starts all services
 - `docker compose down -v` stops and deletes all containers with volumes.
 
+## API Endpoints
+
+### Product Service — http://localhost:8081
+
+| Method | Endpoint                      | Description                      |
+|--------|--------------------------------|-----------------------------------|
+| POST   | /api/products                  | Create a product                 |
+| GET    | /api/products                  | Get all products                 |
+| GET    | /api/products/{id}              | Get product by ID                |
+| PUT    | /api/products/{id}              | Update product by ID             |
+| DELETE | /api/products/{id}              | Delete product by ID             |
+| GET    | /api/products/search?keyword=   | Search products by keyword       |
+| GET    | /api/product/demo/message       | Config hot-reload demo endpoint  |
+
+### Order Service — http://localhost:8083
+
+| Method | Endpoint                       | Description                       | Headers               |
+|--------|---------------------------------|-------------------------------------|--------------------------|
+| POST   | /api/carts                      | Add item to cart                  | X-User-ID (required)  |
+| GET    | /api/carts                      | Get current user's cart           | X-User-ID (required)  |
+| DELETE | /api/carts/items/{productId}    | Remove item from cart             | X-User-ID (required)  |
+| POST   | /api/orders                     | Create order from cart            | X-User-ID (required)  |
+| GET    | /api/order/demo/message         | Config hot-reload demo endpoint   | —                      |
+
+### User Service — http://localhost:8082
+
+| Method | Endpoint          | Description        |
+|--------|--------------------|-----------------------|
+| GET    | /api/users          | Get all users       |
+| GET    | /api/users/{id}      | Get user by ID      |
+| POST   | /api/users           | Create a user       |
+| PUT    | /api/users/{id}      | Update user by ID   |
+| DELETE | /api/users/{id}      | Delete user by ID   |
+
+Note: `X-User-ID` is a plain request header (string), not auth — every cart/order request needs it since there's no auth layer yet.
+
