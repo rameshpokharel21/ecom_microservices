@@ -11,16 +11,13 @@ services:
       - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
     ports:
       - "5433:5432"
-
+    networks:
+      - ecom-network
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 5s
       timeout: 5s
       retries: 5
-
-    networks:
-      - ecom-network
-
     restart: unless-stopped
 
   mongodb:
@@ -31,6 +28,8 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
     ports:
       - "${MONGO_PORT}:27017"
+    networks:
+      - ecom-network
     volumes:
       - mongo_data:/data/db
     healthcheck:
@@ -39,9 +38,55 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
+    restart: unless-stopped
+
+  rabbitmq:
+    container_name: rabbitmq
+    image: rabbitmq:management
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
+    ports:
+      - "${RABBITMQ_PORT}:5672" #AMQP
+      - "${RABBITMQ_MGMT_PORT}:15672" #Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
     networks:
       - ecom-network
+    healthcheck:
+      test: [ "CMD", "rabbitmq-diagnostics", "ping" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     restart: unless-stopped
+
+  #config server
+  config-server:
+    build:
+      context: ./configserver
+    container_name: ecom_config_server
+    ports:
+      - "${CONFIG_PORT}:8888"
+    volumes:
+      - ./configserver/src/main/resources/config:/app/config
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: ${RABBITMQ_PORT}
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
+    networks:
+      - ecom-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/actuator/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
 
   # Product service
   product-service:
@@ -55,11 +100,20 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      config-server:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${PRODUCT_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: ${RABBITMQ_PORT}
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
+      SPRING_CLOUD_CONFIG_URI: http://config-server:8888
 
     networks:
       - ecom-network
@@ -77,10 +131,19 @@ services:
     depends_on:
       mongodb:
         condition: service_healthy
+      config-server:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
     environment:
-      SPRING_DATA_MONGODB_URI: mongodb://${MONGO_USERNAME}:${MONGO_PASSWORD}@ecom_mongodb:27017/${USER_DB}?authSource=admin
+      SPRING_MONGODB_URI: mongodb://${MONGO_USERNAME}:${MONGO_PASSWORD}@ecom_mongodb:27017/${USER_DB}?authSource=admin
       TEST_VAR: hello_from_docker
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: ${RABBITMQ_PORT}
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
+      SPRING_CLOUD_CONFIG_URI: http://config-server:8888
 
     networks:
       - ecom-network
@@ -98,31 +161,40 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      config-server:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
 
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${ORDER_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: ${RABBITMQ_PORT}
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
+      SPRING_CLOUD_CONFIG_URI: http://config-server:8888
 
     networks:
       - ecom-network
 
     restart: unless-stopped
 
-  pgadmin:
-    container_name: ecom_pgadmin
-    image: dpage/pgadmin4
-    environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
-      PGADMIN_CONFIG_SERVER_MODE: 'False'
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin/data
-    ports:
-      - "5050:80"
-    networks:
-      - ecom-network
-    restart: unless-stopped
+#  pgadmin:
+#    container_name: ecom_pgadmin
+#    image: dpage/pgadmin4
+#    environment:
+#      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+#      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+#      PGADMIN_CONFIG_SERVER_MODE: 'False'
+#    volumes:
+#      - pgadmin_data:/var/lib/pgadmin/data
+#    ports:
+#      - "5050:80"
+#    networks:
+#      - ecom-network
+#    restart: unless-stopped
 
 networks:
   ecom-network:
@@ -130,4 +202,5 @@ networks:
 volumes:
   postgres_data:
   mongo_data:
-  pgadmin_data:
+  rabbitmq_data:
+  #pgadmin_data:

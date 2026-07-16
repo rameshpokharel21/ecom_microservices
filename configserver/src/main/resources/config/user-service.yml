@@ -1,0 +1,13 @@
+server:
+  port: 8082
+spring:
+  mongodb:
+    uri: ${SPRING_MONGODB_URI}
+logging:
+  level:
+    root: INFO
+    org.springframework.data.mongodb.core: DEBUG
+    org.springframework.boot.autoconfigure: DEBUG
+
+
+
