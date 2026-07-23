@@ -27,14 +27,14 @@ USER_PORT=8082
 ORDER_DB=order_db
 ORDER_PORT=8083
 
-#pgAdmin
-PGADMIN_DEFAULT_EMAIL=admin@admin.com
-PGADMIN_DEFAULT_PASSWORD=admin
+#eureka server
+EUREKA_SERVER_PORT=8761
+
 
 ```
 - It has services like user-service, product-service, order-service
-- With Docker-compose.yml also installs postgresql, mongodb, pgadmin
-- `docker compose up -d` starts all services
+- With Docker-compose.yml also installs postgresql, mongodb
+- `docker compose up -d --build` starts all services with building new images with each Dockerfile.
 - `docker compose down -v` stops and deletes all containers with volumes.
 
 ## API Endpoints
