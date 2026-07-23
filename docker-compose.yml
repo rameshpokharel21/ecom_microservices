@@ -181,6 +181,23 @@ services:
 
     restart: unless-stopped
 
+  # eureka server
+  eureka-server:
+    build:
+      context: ./eureka
+    container_name: ecom_eureka_server
+    ports:
+      - "${EUREKA_SERVER_PORT}:8761"
+
+    depends_on:
+      config-server:
+        condition: service_healthy
+    environment:
+      SPRING_CLOUD_CONFIG_URI: http://config-server:8888
+    networks:
+      - ecom-network
+    restart: unless-stopped
+
 #  pgadmin:
 #    container_name: ecom_pgadmin
 #    image: dpage/pgadmin4

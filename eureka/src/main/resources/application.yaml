@@ -1,0 +1,10 @@
+
+spring:
+  application:
+    name: eureka-server
+
+  config:
+    import: optional:configserver:${SPRING_CLOUD_CONFIG_URI}
+    fail-fast: true
+
+
