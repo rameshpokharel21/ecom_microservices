@@ -39,10 +39,10 @@ public class OrderService {
 
         //build order
         Order order = new Order();
-        order.setUserId(Long.valueOf(userId));
+        order.setUserId(userId);
         order.setStatus(OrderStatus.CONFIRMED);
         order.setTotalAmount(totalPrice);
-        List<OrderItem> orderItems = buildOrderitems(cartItems, order);
+        List<OrderItem> orderItems = buildOrderItems(cartItems, order);
         order.setItems(orderItems);
         Order savedOrder = orderRepository.save(order);
 
@@ -52,7 +52,7 @@ public class OrderService {
         return Optional.of(orderMapper.toResponse(savedOrder));
     }
 
-    private List<OrderItem> buildOrderitems(List<CartItem> cartItems, Order order){
+    private List<OrderItem> buildOrderItems(List<CartItem> cartItems, Order order){
         return cartItems.stream()
                 .map(item -> {
                     OrderItem orderItem = new OrderItem();

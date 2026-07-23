@@ -19,18 +19,12 @@ public class CartController {
     private final CartService cartService;
 
     @PostMapping
-    public ResponseEntity<String> addToCart(
+    public ResponseEntity<Void> addToCart(
             @RequestHeader("X-User-ID") String userId,
             @RequestBody CartItemRequest cartItemRequest
             ){
-        if(cartService.addToCart(userId, cartItemRequest)) {
-            return ResponseEntity
-                    .status(HttpStatus.CREATED)
-                    .build();
-        }else{
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                    .body("Product out of stock or User not found or Product not found");
-        }
+        cartService.addToCart(userId, cartItemRequest);
+        return ResponseEntity.status(HttpStatus.CREATED).build();
     }
 
     @DeleteMapping("/items/{productId}")
