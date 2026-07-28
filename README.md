@@ -33,7 +33,7 @@ EUREKA_SERVER_PORT=8761
 
 ```
 - It has services like user-service, product-service, order-service
-- There are a couple of docker compose files. 
+- There is a couple of docker compose files. 
 - First run root folder's docker compose that has above services with postgresql, mongodb etc.
 - Then run second docker-compose.yml within evaluate-prometheus to run grafana, prometheus, loki containers.
 - The second docker compose can use/detect required containers of the first docker compose file by allowing it as external network.

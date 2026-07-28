@@ -2,7 +2,7 @@
 .env
 logs/
 details.md
-evaluate-loki/.data/*
+evaluate-prometheus/.data/*
 
 HELP.md
 target/
