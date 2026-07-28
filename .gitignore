@@ -1,6 +1,8 @@
 
 .env
 logs/
+details.md
+evaluate-loki/.data/*
 
 HELP.md
 target/

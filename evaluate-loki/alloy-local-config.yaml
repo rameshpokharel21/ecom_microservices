@@ -47,8 +47,8 @@ loki.source.file "system_file_scrape" {
     tail_from_end     = true
 }
 
-loki.file_match "loki_app_logs" {
-    path_targets = [{"__path__" = "/logs/*.log"}]
+local.file_match "loki_app_logs" {
+    path_targets = [{"__path__" = "/logs/**/*.log"}]
     sync_period  = "5s"
 }
 

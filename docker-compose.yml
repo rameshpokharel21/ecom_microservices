@@ -69,6 +69,7 @@ services:
       - "${CONFIG_PORT}:8888"
     volumes:
       - ./configserver/src/main/resources/config:/app/config
+      - ./logs/config-server:/app/logs
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -115,6 +116,8 @@ services:
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
       SPRING_CLOUD_CONFIG_URI: http://config-server:8888
 
+    volumes:
+      - ./logs/product-service:/app/logs
     networks:
       - ecom-network
     restart: unless-stopped
@@ -144,7 +147,8 @@ services:
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
       SPRING_CLOUD_CONFIG_URI: http://config-server:8888
-
+    volumes:
+      - ./logs/user-service:/app/logs
     networks:
       - ecom-network
     restart: unless-stopped
@@ -175,7 +179,8 @@ services:
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
       SPRING_CLOUD_CONFIG_URI: http://config-server:8888
-
+    volumes:
+      - ./logs/order-service:/app/logs
     networks:
       - ecom-network
 
@@ -194,6 +199,8 @@ services:
         condition: service_healthy
     environment:
       SPRING_CLOUD_CONFIG_URI: http://config-server:8888
+    volumes:
+      - ./logs/eureka-server:/app/logs
     networks:
       - ecom-network
     restart: unless-stopped
