@@ -21,6 +21,84 @@ loki.source.docker "flog_scrape" {
 	refresh_interval = "5s"
 }
 
+local.file_match "system_logs" {
+    path_targets = [{"__path__" = "/var/log/*.log"}]
+    sync_period = "5s"
+}
+
+discovery.relabel "system_logs" {
+    targets = local.file_match.system_logs.targets
+    
+    rule {
+        source_labels = ["__path__"]
+        target_label = "filename"
+    }
+  
+    rule {
+        source_labels = ["__path__"]
+        regex         = ".*/(.*)\\.log"
+        target_label  = "service_name"
+    }
+}
+
+loki.source.file "system_file_scrape" {
+    targets           = discovery.relabel.system_logs.output
+    forward_to        = [loki.write.default.receiver]
+    tail_from_end     = true
+}
+
+loki.file_match "loki_app_logs" {
+    path_targets = [{"__path__" = "/logs/*.log"}]
+    sync_period  = "5s"
+}
+
+discovery.relabel "loki_app_logs" {
+    targets = local.file_match.loki_app_logs.targets
+  
+    rule {
+        source_labels = ["__path__"]
+        target_label  = "filename"
+    }
+  
+    rule {
+        source_labels = ["__path__"]
+        regex         = ".*/(.*)\\.log"
+        target_label  = "service_name"
+    }
+}
+
+loki.source.file "loki_app_file_scrape" {
+    targets       = discovery.relabel.loki_app_logs.output
+    forward_to    = [loki.write.default.receiver]
+    tail_from_end = true
+}
+
+local.file_match "parent_app_logs" {
+    path_targets = [{"__path__" = "/logs-parent/*.log"}]
+    sync_period = "5s"
+}
+
+discovery.relabel "parent_app_logs" {
+    targets = local.file_match.parent_app_logs.targets
+  
+    rule {
+        source_labels = ["__path__"]
+        target_label = "filename"
+    }
+  
+    rule {
+        source_labels = ["__path__"]
+        regex         = ".*/(.*)\\.log"
+        target_label  = "service_name"
+    }
+}
+
+loki.source.file "parent_app_file_scrape" {
+    targets       = discovery.relabel.parent_app_logs.output
+    forward_to    = [loki.write.default.receiver]
+    tail_from_end = true
+}
+
 loki.write "default" {
 	endpoint {
 		url       = "http://gateway:3100/loki/api/v1/push"
