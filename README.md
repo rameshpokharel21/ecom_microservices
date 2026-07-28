@@ -33,7 +33,10 @@ EUREKA_SERVER_PORT=8761
 
 ```
 - It has services like user-service, product-service, order-service
-- With Docker-compose.yml also installs postgresql, mongodb
+- There are a couple of docker compose files. 
+- First run root folder's docker compose that has above services with postgresql, mongodb etc.
+- Then run second docker-compose.yml within evaluate-prometheus to run grafana, prometheus, loki containers.
+- The second docker compose can use/detect required containers of the first docker compose file by allowing it as external network.
 - `docker compose up -d --build` starts all services with building new images with each Dockerfile.
 - `docker compose down -v` stops and deletes all containers with volumes.
 
