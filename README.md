@@ -39,7 +39,7 @@ EUREKA_SERVER_PORT=8761
 - The second docker compose can use/detect required containers of the first docker compose file by allowing it as external network.
 - `docker compose up -d --build` starts all services with building new images with each Dockerfile.
 - `docker compose down -v` stops and deletes all containers with volumes.
-
+- zipkin added as docker container, tracing available at http://localhost:9411
 ## API Endpoints
 
 ### Product Service — http://localhost:8081
