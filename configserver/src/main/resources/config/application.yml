@@ -3,6 +3,14 @@ management:
     web:
       exposure:
         include: "*"
+  #eureka deregistering gracefully
+  endpoint:
+    shutdown:
+      enabled: true
+  #zipkin
+  tracing:
+    sampling:
+      probability: 1.0
 
 
 eureka:
@@ -11,3 +19,11 @@ eureka:
       defaultZone: http://eureka-server:8761/eureka
     register-with-eureka: true
     fetch-registry: true
+
+logging:
+  file:
+    name: logs/${spring.application.name}.log
+  logback:
+    rollingpolicy:
+      max-file-size: 5MB
+      max-history: 7
