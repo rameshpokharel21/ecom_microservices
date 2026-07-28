@@ -205,6 +205,14 @@ services:
       - ecom-network
     restart: unless-stopped
 
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: zipkin
+    ports:
+      - "9411:9411"
+    networks:
+      - ecom-network
+
 #  pgadmin:
 #    container_name: ecom_pgadmin
 #    image: dpage/pgadmin4

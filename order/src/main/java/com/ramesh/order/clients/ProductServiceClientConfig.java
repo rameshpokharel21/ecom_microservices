@@ -1,5 +1,7 @@
 package com.ramesh.order.clients;
 
+import lombok.RequiredArgsConstructor;
+import org.springframework.boot.restclient.autoconfigure.RestClientBuilderConfigurer;
 import org.springframework.cloud.client.loadbalancer.LoadBalanced;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -9,18 +11,21 @@ import org.springframework.web.client.support.RestClientAdapter;
 import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 
 @Configuration
+@RequiredArgsConstructor
 public class ProductServiceClientConfig {
+
+    private final RestClientBuilderConfigurer restClientBuilderConfigurer;
 
     @Bean
     @Primary
     public RestClient.Builder restClientBuilder(){
-        return RestClient.builder();
+        return restClientBuilderConfigurer.configure(RestClient.builder());
     }
 
     @Bean
     @LoadBalanced
     public RestClient.Builder loadBalancedRestClientBuilder(){
-        return RestClient.builder();
+        return restClientBuilderConfigurer.configure(RestClient.builder());
     }
 
     @Bean
