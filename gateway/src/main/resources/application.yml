@@ -1,0 +1,7 @@
+spring:
+  application:
+    name: gateway
+
+  config:
+    import: optional:configserver:${SPRING_CLOUD_CONFIG_URI}
+    fail-fast: true

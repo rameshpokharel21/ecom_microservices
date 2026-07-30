@@ -88,6 +88,32 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  #cloud-gateway
+  gateway:
+    build:
+      context: ./gateway
+    container_name: ecom_gateway
+    ports:
+      - "${GATEWAY_PORT}:8080"
+    volumes:
+      - ./logs/gateway:/app/logs
+    depends_on:
+      config-server:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    environment:
+      SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
+    networks:
+      - ecom-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/actuator/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    restart: unless-stopped
+
 
   # Product service
   product-service:
@@ -114,7 +140,7 @@ services:
       SPRING_RABBITMQ_PORT: ${RABBITMQ_PORT}
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
-      SPRING_CLOUD_CONFIG_URI: http://config-server:8888
+      SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
 
     volumes:
       - ./logs/product-service:/app/logs
@@ -146,7 +172,7 @@ services:
       SPRING_RABBITMQ_PORT: ${RABBITMQ_PORT}
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
-      SPRING_CLOUD_CONFIG_URI: http://config-server:8888
+      SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
     volumes:
       - ./logs/user-service:/app/logs
     networks:
@@ -178,7 +204,7 @@ services:
       SPRING_RABBITMQ_PORT: ${RABBITMQ_PORT}
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
-      SPRING_CLOUD_CONFIG_URI: http://config-server:8888
+      SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
     volumes:
       - ./logs/order-service:/app/logs
     networks:
@@ -198,11 +224,17 @@ services:
       config-server:
         condition: service_healthy
     environment:
-      SPRING_CLOUD_CONFIG_URI: http://config-server:8888
+      SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
     volumes:
       - ./logs/eureka-server:/app/logs
     networks:
       - ecom-network
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8761/actuator/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     restart: unless-stopped
 
   zipkin:
