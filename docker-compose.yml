@@ -14,10 +14,13 @@ services:
     networks:
       - ecom-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      #real query, not pg_isready: PQping reports the server up without opening
+      #the database, so it goes green while init-db.sql is still running.
+      #order_db is the last statement in init-db.sql, so it's the strictest signal
+      test: ["CMD-SHELL", "psql -U ${POSTGRES_USER} -d ${ORDER_DB} -c 'SELECT 1' > /dev/null 2>&1 || exit 1"]
       interval: 5s
       timeout: 5s
-      retries: 5
+      retries: 10
     restart: unless-stopped
 
   mongodb:
@@ -68,20 +71,20 @@ services:
     ports:
       - "${CONFIG_PORT}:8888"
     volumes:
-      - ./configserver/src/main/resources/config:/app/config
+      - ./configserver/src/main/resources/config:/app/config:ro
       - ./logs/config-server:/app/logs
     depends_on:
       rabbitmq:
         condition: service_healthy
     environment:
       SPRING_RABBITMQ_HOST: rabbitmq
-      SPRING_RABBITMQ_PORT: ${RABBITMQ_PORT}
+      SPRING_RABBITMQ_PORT: 5672
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
     networks:
       - ecom-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8888/actuator/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:9090/actuator/health"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -107,7 +110,7 @@ services:
     networks:
       - ecom-network
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8080/actuator/health" ]
+      test: [ "CMD", "curl", "-f", "http://localhost:9090/actuator/health" ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -122,8 +125,7 @@ services:
 
     container_name: ecom_product
 
-    ports:
-      - "${PRODUCT_PORT}:8081"
+    #no ports: reachable only through the gateway and inside ecom-network
     depends_on:
       postgres:
         condition: service_healthy
@@ -131,13 +133,15 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      eureka-server:
+        condition: service_healthy
 
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${PRODUCT_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
       SPRING_RABBITMQ_HOST: rabbitmq
-      SPRING_RABBITMQ_PORT: ${RABBITMQ_PORT}
+      SPRING_RABBITMQ_PORT: 5672
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
       SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
@@ -155,8 +159,7 @@ services:
 
     container_name: ecom_user
 
-    ports:
-      - "${USER_PORT}:8082"
+    #no ports: reachable only through the gateway and inside ecom-network
     depends_on:
       mongodb:
         condition: service_healthy
@@ -164,12 +167,14 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      eureka-server:
+        condition: service_healthy
 
     environment:
-      SPRING_MONGODB_URI: mongodb://${MONGO_USERNAME}:${MONGO_PASSWORD}@ecom_mongodb:27017/${USER_DB}?authSource=admin
+      SPRING_MONGODB_URI: mongodb://${MONGO_USERNAME}:${MONGO_PASSWORD}@mongodb:27017/${USER_DB}?authSource=admin
       TEST_VAR: hello_from_docker
       SPRING_RABBITMQ_HOST: rabbitmq
-      SPRING_RABBITMQ_PORT: ${RABBITMQ_PORT}
+      SPRING_RABBITMQ_PORT: 5672
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
       SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
@@ -186,8 +191,7 @@ services:
 
     container_name: ecom_order
 
-    ports:
-      - "${ORDER_PORT}:8083"
+    #no ports: reachable only through the gateway and inside ecom-network
     depends_on:
       postgres:
         condition: service_healthy
@@ -195,13 +199,15 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      eureka-server:
+        condition: service_healthy
 
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${ORDER_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
       SPRING_RABBITMQ_HOST: rabbitmq
-      SPRING_RABBITMQ_PORT: ${RABBITMQ_PORT}
+      SPRING_RABBITMQ_PORT: 5672
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
       SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
@@ -230,7 +236,7 @@ services:
     networks:
       - ecom-network
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:8761/actuator/health" ]
+      test: [ "CMD", "curl", "-f", "http://localhost:9090/actuator/health" ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -244,6 +250,7 @@ services:
       - "9411:9411"
     networks:
       - ecom-network
+    restart: unless-stopped
 
 #  pgadmin:
 #    container_name: ecom_pgadmin

@@ -1,4 +1,8 @@
 management:
+  #actuator on its own port, deliberately not published in docker-compose.yml
+  #so endpoints (incl. shutdown) are reachable inside ecom-network only
+  server:
+    port: 9090
   endpoints:
     web:
       exposure:

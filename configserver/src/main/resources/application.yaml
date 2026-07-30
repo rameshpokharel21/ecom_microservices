@@ -14,7 +14,7 @@ spring:
 
   rabbitmq:
     host: rabbitmq
-    port: ${RABBITMQ_PORT}
+    port: 5672
     username: ${RABBITMQ_USER}
     password: ${RABBITMQ_PASS}
 eureka:
@@ -24,6 +24,9 @@ eureka:
     register-with-eureka: true
     fetch-registry: true
 management:
+  #actuator on its own port, deliberately not published in docker-compose.yml
+  server:
+    port: 9090
   endpoints:
     web:
       exposure:
