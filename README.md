@@ -1,6 +1,7 @@
 # ecom_microservices
 
 ---
+- This project runs using docker compose.
 - Install docker desktop in your machine
 
 ## Environment variables
@@ -15,6 +16,13 @@ MONGO_USERNAME=user
 MONGO_PASSWORD=password
 MONGO_PORT=27018
 
+
+# rabbitmq
+RABBITMQ_USER=admin
+RABBITMQ_PASS=admin1234
+RABBITMQ_PORT=5672
+RABBITMQ_MGMT_PORT=15672
+
 #Product service
 PRODUCT_DB=product_db
 PRODUCT_PORT=8081
@@ -27,9 +35,19 @@ USER_PORT=8082
 ORDER_DB=order_db
 ORDER_PORT=8083
 
-#eureka server
+# config server
+CONFIG_PORT=8888
+SPRING_CLOUD_CONFIG_URI=http://config-server:8888
+
+# eureka server
 EUREKA_SERVER_PORT=8761
 
+#gateway
+GATEWAY_PORT
+
+# pgAdmin
+PGADMIN_DEFAULT_EMAIL=admin@admin.com
+PGADMIN_DEFAULT_PASSWORD=admin
 
 ```
 - It has services like user-service, product-service, order-service
@@ -41,6 +59,7 @@ EUREKA_SERVER_PORT=8761
 - `docker compose down -v` stops and deletes all containers with volumes.
 - zipkin added as docker container, tracing available at http://localhost:9411
 ## API Endpoints
+- only gateway port(8080) is allowed for all services.
 
 ### Product Service — http://localhost:8081
 
