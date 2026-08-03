@@ -1,0 +1,29 @@
+server:
+  port: 8080
+
+management:
+  endpoint:
+    #route-listing endpoint is disabled by default; exposure ("*" in the shared
+    #config) is a separate switch from enablement. "gateway" here is the fixed
+    #actuator endpoint id, not the service name.
+    gateway:
+      access: read-only
+
+#spring:
+#  cloud:
+#    gateway:
+#      server:
+#        webflux:
+#          routes:
+#            - id: PRODUCT-SERVICE
+#              uri: lb://product-service
+#              predicates:
+#                - Path=/api/products/**
+#            - id: USER-SERVICE
+#              uri: lb://user-service
+#              predicates:
+#                - Path=/api/users/**
+#            - id: ORDER-SERVICE
+#              uri: lb://order-service
+#              predicates:
+#                - Path=/api/carts/**,/api/orders/**

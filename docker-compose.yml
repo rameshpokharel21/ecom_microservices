@@ -92,14 +92,14 @@ services:
     restart: unless-stopped
 
   #cloud-gateway
-  gateway:
+  cloud-gateway:
     build:
       context: ./gateway
     container_name: ecom_gateway
     ports:
       - "${GATEWAY_PORT}:8080"
     volumes:
-      - ./logs/gateway:/app/logs
+      - ./logs/cloud-gateway:/app/logs
     depends_on:
       config-server:
         condition: service_healthy
