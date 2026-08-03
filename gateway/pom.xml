@@ -58,6 +58,7 @@
         </dependency>
 
 
+        <!--        This includes spring-cloud-starter-loadbalancer-->
         <dependency>
 			<groupId>org.springframework.cloud</groupId>
 			<artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
