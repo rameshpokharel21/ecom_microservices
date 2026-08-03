@@ -6,6 +6,7 @@ import org.springframework.cloud.client.loadbalancer.LoadBalanced;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.springframework.context.annotation.Scope;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.support.RestClientAdapter;
 import org.springframework.web.service.invoker.HttpServiceProxyFactory;
@@ -16,14 +17,19 @@ public class ProductServiceClientConfig {
 
     private final RestClientBuilderConfigurer restClientBuilderConfigurer;
 
+    //prototype, matching Boot's own RestClientAutoConfiguration: RestClient.Builder
+    //is mutable (baseUrl() sets a field and returns this), so a singleton would be
+    //shared by every injection point. Each consumer gets its own copy instead.
     @Bean
     @Primary
+    @Scope("prototype")
     public RestClient.Builder restClientBuilder(){
         return restClientBuilderConfigurer.configure(RestClient.builder());
     }
 
     @Bean
     @LoadBalanced
+    @Scope("prototype")
     public RestClient.Builder loadBalancedRestClientBuilder(){
         return restClientBuilderConfigurer.configure(RestClient.builder());
     }
