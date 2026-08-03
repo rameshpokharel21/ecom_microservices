@@ -1,6 +1,5 @@
 package com.ramesh.user.dtos;
 
-import com.ramesh.user.entities.AddressDto;
 import lombok.Data;
 
 @Data

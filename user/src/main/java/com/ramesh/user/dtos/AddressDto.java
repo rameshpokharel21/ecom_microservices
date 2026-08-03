@@ -1,4 +1,4 @@
-package com.ramesh.user.entities;
+package com.ramesh.user.dtos;
 
 import lombok.Data;
 

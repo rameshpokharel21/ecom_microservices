@@ -5,7 +5,7 @@ import com.ramesh.user.dtos.UserRequest;
 import com.ramesh.user.dtos.UserResponse;
 
 import com.ramesh.user.entities.Address;
-import com.ramesh.user.entities.AddressDto;
+import com.ramesh.user.dtos.AddressDto;
 import com.ramesh.user.entities.User;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
