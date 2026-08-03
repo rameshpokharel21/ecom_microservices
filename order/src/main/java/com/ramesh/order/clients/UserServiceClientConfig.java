@@ -10,6 +10,8 @@ import org.springframework.web.service.invoker.HttpServiceProxyFactory;
 @Configuration
 public class UserServiceClientConfig {
 
+    //@LoadBalanced selects the discovery-aware builder from RestClientConfig, so
+    //"user-service" is resolved as a Eureka service ID rather than a hostname.
     @Bean
     public UserServiceClient userServiceClient(@LoadBalanced RestClient.Builder builder){
         RestClient restClient = builder
