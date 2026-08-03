@@ -5,9 +5,6 @@ containerised with Docker Compose. Includes service discovery, centralised
 configuration, an API gateway, distributed tracing, metrics, and log
 aggregation.
 
-> For a deep explanation of every setting, design decision, and bug fixed along
-> the way, see **[details.md](details.md)**. This README is the quick start.
-
 ---
 
 ## Table of contents
