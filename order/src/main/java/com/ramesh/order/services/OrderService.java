@@ -8,6 +8,7 @@ import com.ramesh.order.entities.OrderItem;
 import com.ramesh.order.entities.OrderStatus;
 import com.ramesh.order.mappers.OrderMapper;
 import com.ramesh.order.repositories.OrderRepository;
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -18,6 +19,7 @@ import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
+@Transactional
 @RequiredArgsConstructor
 public class OrderService {
 

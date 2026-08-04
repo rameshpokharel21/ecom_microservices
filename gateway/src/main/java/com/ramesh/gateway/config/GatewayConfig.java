@@ -24,6 +24,20 @@ public class GatewayConfig {
                         .path("/api/carts/**", "/api/orders/**")
                         .uri("lb://order-service")
                 )
+                //for actuator on order service
+                //uri will be http://localhost:8080/actuator/order/circuitbreakers
+                //because 9090 is docker actuator
+                //commented and instead used compose order-service ports: "9083:9090"
+//                .route("ORDER-ACTUATOR", r -> r
+//                        .path("/actuator/order/**")
+//                        .filters(f ->
+//                                f.rewritePath("/actuator/order/(?<seg>.*)",
+//                                        "/actuator/${seg}")
+//                                )
+//                        .uri("http://order-service:9090")
+//                )
+
+
                 //dashboard at /eureka (not /eureka/main) so the browser resolves
                 //Eureka's relative asset URLs (eureka/css/wro.css) to /eureka/css/...,
                 //which the passthrough route below serves. Declared first: /eureka/**

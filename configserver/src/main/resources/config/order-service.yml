@@ -14,3 +14,11 @@ spring:
 app:
   order:
     message: "hello-order-v2"
+
+#No circuit-breaker config here on purpose: the breakers are built in Java, by the
+#Customizer<Resilience4JCircuitBreakerFactory> bean in CustomCircuitBreakerConfig.
+#
+#The actuator endpoints need no config either. Both are declared @Endpoint(id="circuitbreakers")
+#and @Endpoint(id="circuitbreakerevents") with no enableByDefault=false, so unlike the
+#gateway's routes endpoint they are on by default and the exposure include:"*" in the
+#shared application.yml is already enough to reach them.

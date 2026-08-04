@@ -28,6 +28,16 @@ public class GlobalExceptionHandler {
                 .body(new ErrorResponse("INSUFFICIENT_STOCK", ex.getMessage()));
     }
 
+    // Raised by the circuit breaker fallbacks in CartService. Covers all three outage
+    // shapes in one place: breaker OPEN (CallNotPermittedException), TimeLimiter expiry
+    // (TimeoutException) and transport failures - none of which reach the handlers below
+    // once a fallback has translated them.
+    @ExceptionHandler(ServiceUnavailableException.class)
+    public ResponseEntity<ErrorResponse> handleServiceUnavailable(ServiceUnavailableException ex) {
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(new ErrorResponse("DOWNSTREAM_UNAVAILABLE", ex.getMessage()));
+    }
+
     @ExceptionHandler(RestClientException.class)
     public ResponseEntity<ErrorResponse> handleDownstreamUnavailable(RestClientException ex) {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
