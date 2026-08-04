@@ -64,6 +64,27 @@
 			<artifactId>spring-cloud-starter-netflix-eureka-client</artifactId>
 		</dependency>
 
+        <!--        Reactor variant, not the plain one order-service uses: the gateway is
+                    WebFlux, and the route filter needs a ReactiveCircuitBreakerFactory.
+                    Version comes from spring-cloud-dependencies (5.0.2), so it is not
+                    declared here.
+
+                    No spring-boot-starter-aspectj needed, unlike order-service. That
+                    starter exists there only to satisfy resilience4j's
+                    @Conditional(AspectJOnClasspathCondition) on its CircuitBreakerAspect,
+                    which is what makes the @CircuitBreaker annotation work. The gateway
+                    has no annotations - GatewayConfig applies breakers through the
+                    programmatic ReactiveCircuitBreaker API in a route filter, so no
+                    aspect and no proxying is involved.
+
+                    The actuator endpoints and the resilience4j.* property binding come
+                    from resilience4j-spring-boot3, pulled in transitively (compile scope)
+                    by spring-cloud-circuitbreaker-resilience4j.-->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-circuitbreaker-reactor-resilience4j</artifactId>
+        </dependency>
+
 		<dependency>
 			<groupId>io.micrometer</groupId>
 			<artifactId>micrometer-registry-prometheus</artifactId>

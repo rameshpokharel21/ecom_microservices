@@ -54,8 +54,12 @@ resilience4j:
         # open the breaker. Note it records, it does not abort - the caller still waits.
         slow-call-duration-threshold: 4s
         slow-call-rate-threshold: 50
-        # publishes breaker state into /actuator/health. Safe here because order-service
-        # has no compose healthcheck, so an OPEN breaker cannot get the container killed.
+        # publishes breaker state into /actuator/health as a "circuitBreakers" entry.
+        # An OPEN breaker does NOT turn the endpoint DOWN: OPEN maps to the custom status
+        # CIRCUIT_OPEN, which SimpleStatusAggregator drops because it is not in
+        # Status.DEFAULT_ORDER, so the aggregate stays UP. allow-health-indicator-to-fail:
+        # true is what would make it a real DOWN / HTTP 503 - not set, here or in
+        # cloud-gateway.yml.
         register-health-indicator: true
         # a 404 means "no such product/user", not "the service is broken", so it must not
         # push the breaker towards OPEN. Ignored exceptions are recorded as neither

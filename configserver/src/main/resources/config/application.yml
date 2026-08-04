@@ -1,16 +1,28 @@
 management:
-  #actuator on its own port, deliberately not published in docker-compose.yml
-  #so endpoints (incl. shutdown) are reachable inside ecom-network only
+  #actuator on its own port. Two services now publish it to the HOST for browser
+  #access - cloud-gateway on 7073, order-service on 9083 - but both are bound to
+  #127.0.0.1 in docker-compose.yml, so they are still unreachable from the LAN.
+  #Everything else stays reachable inside ecom-network only. Keep the loopback
+  #prefix if you publish more: exposure is "*" below, which includes
+  #/actuator/heapdump - the entire JVM heap, DB and RabbitMQ credentials included.
   server:
     port: 9090
   endpoints:
     web:
       exposure:
         include: "*"
-  #eureka deregistering gracefully
-  endpoint:
-    shutdown:
-      enabled: true
+  #The shutdown endpoint is currently OFF, in spite of the intent recorded here.
+  #`management.endpoint.shutdown.enabled: true` was a Boot 3 property; Boot 4
+  #removed the per-endpoint `enabled` form entirely. PropertiesEndpointAccessResolver
+  #builds exactly one key, "management.endpoint.%s.access", so the old property is
+  #read by nobody, and ShutdownEndpoint is @Endpoint(defaultAccess = Access.NONE).
+  #
+  #To restore graceful Eureka deregistration, uncomment the line below - but only
+  #together with the loopback binding above, because it makes an unauthenticated
+  #POST /actuator/shutdown able to stop the service.
+  #endpoint:
+  #  shutdown:
+  #    access: unrestricted
   #zipkin
   tracing:
     export:

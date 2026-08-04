@@ -98,6 +98,12 @@ services:
     container_name: ecom_gateway
     ports:
       - "${GATEWAY_PORT}:8080"
+      #actuator, bound to loopback only. Without the 127.0.0.1 prefix Docker binds
+      #0.0.0.0, exposing /actuator/heapdump (the whole JVM heap, credentials included)
+      #and /actuator/env to anything on the LAN. See details.md §16.2.
+      #7073, not 8083: 8083 is already order-service's application port inside the
+      #network, and reusing it on the host made "8083" mean two different services.
+      - "127.0.0.1:7073:9090"
     volumes:
       - ./logs/cloud-gateway:/app/logs
     depends_on:
@@ -110,7 +116,11 @@ services:
     networks:
       - ecom-network
     healthcheck:
-      test: [ "CMD", "curl", "-f", "http://localhost:9090/actuator/health" ]
+      #liveness, not /actuator/health: register-health-indicator is on for the gateway
+      #breakers, so an OPEN breaker makes /actuator/health report DOWN and return 503,
+      #which would fail `curl -f` and mark the container unhealthy for a downstream
+      #outage the gateway is handling correctly. The liveness group is livenessState only.
+      test: [ "CMD", "curl", "-f", "http://localhost:9090/actuator/health/liveness" ]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -189,10 +199,11 @@ services:
     build:
       context: ./order
     ports:
-      - "9083:9090"
+      #actuator only, loopback-bound - see the note on cloud-gateway above.
+      #The API itself stays unpublished: reachable only through the gateway.
+      - "127.0.0.1:9093:9090"
     container_name: ecom_order
 
-    #no ports: reachable only through the gateway and inside ecom-network
     depends_on:
       postgres:
         condition: service_healthy

@@ -9,6 +9,107 @@ management:
     gateway:
       access: read-only
 
+    health:
+      show-details: always
+      #Adds /actuator/health/liveness and /actuator/health/readiness. The compose
+      #healthcheck points at liveness rather than at /actuator/health, because
+      #register-health-indicator below makes an OPEN breaker turn /actuator/health
+      #DOWN -> HTTP 503 -> `curl -f` fails -> the container is marked unhealthy.
+      #The liveness group contains only livenessState, so tripping a breaker can no
+      #longer make Docker think the gateway itself is broken.
+      probes:
+        enabled: true
+  health:
+    circuitbreakers:
+      enabled: true
+
+#Top level, NOT under management. resilience4j's properties are bound from
+#"resilience4j.circuitbreaker.*"; nested under management they bind to nothing at all,
+#silently, and every breaker falls back to CircuitBreakerConfig.ofDefaults()
+#(minimum-number-of-calls 100, registerHealthIndicator false) - which looks exactly
+#like the circuit breaker "not working".
+#
+#Unlike order-service, the gateway has no @CircuitBreaker annotations: the breakers are
+#applied by the route filters in GatewayConfig, through the programmatic
+#ReactiveCircuitBreaker API. That needs no aspect, so the gateway needs no
+#spring-boot-starter-aspectj.
+#
+#The instance keys must equal the ids passed to .setName(...) in GatewayConfig.
+#A name with no matching key here is not an error - resilience4j quietly uses
+#configs.default - so a typo shows up as wrong settings, not as a startup failure.
+#Declaring them here also makes them EAGER: resilience4j-spring-boot3 walks
+#instances: at startup and registers each one, so they appear in
+#/actuator/circuitbreakers before any traffic. Without a declaration the gateway
+#filter registers its breaker lazily, on the first request through that route.
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        # count-based: with low traffic a time-based window is usually empty, so rates
+        # never get computed and the breaker never opens
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        # resilience4j's own default is 100, which means the breaker would never open in
+        # a demo. 5 makes it observable.
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        # without this, OPEN -> HALF_OPEN only happens when a call arrives after the wait
+        # duration; with it a scheduler does the transition, so it is visible in actuator
+        # even with no traffic
+        automatic-transition-from-open-to-half-open-enabled: true
+        # Records a slow call as a failure. Must stay BELOW the timelimiter timeout
+        # below, otherwise the timeout aborts the call first and it is recorded as a
+        # plain failure instead of a slow one.
+        slow-call-duration-threshold: 3s
+        slow-call-rate-threshold: 50
+        # publishes breaker state into /actuator/health as a "circuitBreakers" entry.
+        # It does NOT make the endpoint report DOWN when a breaker opens: OPEN maps to
+        # the custom status CIRCUIT_OPEN, which is absent from Status.DEFAULT_ORDER, so
+        # SimpleStatusAggregator filters it out and the aggregate stays UP / HTTP 200.
+        # The switch that would make an OPEN breaker return 503 - and so fail a
+        # `curl -f` container healthcheck - is allow-health-indicator-to-fail: true,
+        # which is deliberately not set. The compose healthcheck targets
+        # /actuator/health/liveness anyway, so turning it on later stays safe.
+        register-health-indicator: true
+        # No ignore-exceptions here. The gateway is a reverse proxy: a downstream 404
+        # comes back as an ordinary HTTP response, not as an exception, so it is already
+        # recorded as a SUCCESS and cannot push the breaker open. HttpClientErrorException
+        # is a RestClient/RestTemplate type and is never thrown on this path.
+        # To make downstream status codes count as failures, add
+        # .setStatusCodes(...) to the route filter instead.
+    instances:
+      # one breaker per downstream service. Sharing a single id across all three routes
+      # would mean product-service failures also open the breaker for /api/users/** and
+      # /api/orders/**.
+      productServiceCB:
+        base-config: default
+      userServiceCB:
+        base-config: default
+      orderServiceCB:
+        base-config: default
+
+  # The reactive path DOES apply a TimeLimiter, unlike the @CircuitBreaker annotation in
+  # order-service: ReactiveResilience4JCircuitBreaker.run() wraps the chain in
+  # Mono.timeout(timeLimiterConfig.getTimeoutDuration()). The default is 1 SECOND, which
+  # a cold downstream JVM will blow through on its first request - the call is aborted
+  # with a TimeoutException, recorded as a failure, and sent to the fallback. Instance
+  # names must match the circuitbreaker instance names.
+  timelimiter:
+    configs:
+      default:
+        timeout-duration: 5s
+        cancel-running-future: true
+    instances:
+      productServiceCB:
+        base-config: default
+      userServiceCB:
+        base-config: default
+      orderServiceCB:
+        base-config: default
+
+#route configuration moved to GatewayConfig class
 #spring:
 #  cloud:
 #    gateway:

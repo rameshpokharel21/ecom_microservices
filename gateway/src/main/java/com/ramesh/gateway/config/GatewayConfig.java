@@ -9,19 +9,48 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class GatewayConfig {
 
+    //Each downstream service gets its own breaker. A single shared name would make
+    //product-service failures open the breaker for /api/users/** and /api/orders/**
+    //too, because Config.getId() returns the name whenever one is set and the filter
+    //factory looks the breaker up in the shared registry by that id.
+    //
+    //These strings must match the resilience4j.circuitbreaker.instances keys in
+    //cloud-gateway.yml. An unmatched name is not a startup error - resilience4j falls
+    //back to configs.default - so a typo shows up only as wrong settings at runtime.
+    private final static String PRODUCT_CB = "productServiceCB";
+    private final static String USER_CB = "userServiceCB";
+    private final static String ORDER_CB = "orderServiceCB";
+
     @Bean
     public RouteLocator customRouteLocator(RouteLocatorBuilder builder){
         return builder.routes()
                 .route("PRODUCT-SERVICE", r -> r
                         .path("/api/products/**")
+                        .filters(f ->
+                                f.circuitBreaker(config -> config
+                                        .setName(PRODUCT_CB)
+                                        .setFallbackUri("forward:/fallback/products")
+                                ))
                         .uri("lb://product-service")
                 )
                 .route("USER-SERVICE", r -> r
                         .path("/api/users/**")
+                        .filters(f ->
+                                f.circuitBreaker(config -> config
+                                        .setName(USER_CB)
+                                        .setFallbackUri("forward:/fallback/users")
+
+                                ))
                         .uri("lb://user-service")
                 )
                 .route("ORDER-SERVICE", r -> r
                         .path("/api/carts/**", "/api/orders/**")
+                        .filters(f -> f
+                                .circuitBreaker(config ->
+                                        config.setName(ORDER_CB)
+                                                .setFallbackUri("forward:/fallback/orders")
+                                )
+                        )
                         .uri("lb://order-service")
                 )
                 //for actuator on order service
