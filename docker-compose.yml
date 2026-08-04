@@ -189,7 +189,7 @@ services:
     build:
       context: ./order
     ports:
-      - "9083:9090
+      - "9083:9090"
     container_name: ecom_order
 
     #no ports: reachable only through the gateway and inside ecom-network

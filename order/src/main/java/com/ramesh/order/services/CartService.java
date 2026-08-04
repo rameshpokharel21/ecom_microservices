@@ -31,7 +31,7 @@ import static com.ramesh.order.config.CustomCircuitBreakerConfig.USER_SERVICE_CB
 @Service
 @RequiredArgsConstructor
 @Transactional
-public class CartService {
+public class  CartService {
 
     private static final Logger logger = LoggerFactory.getLogger(CartService.class);
 

@@ -19,7 +19,7 @@ import java.time.Duration;
 //Publishing our own registry would replace all three, silently disabling
 ///actuator/circuitbreakerevents and any property-based config. A Customizer leaves the
 //auto-configured registry in place and only adds to it.
-@Configuration
+//@Configuration
 public class CustomCircuitBreakerConfig {
 
     //Breaker ids. These are arbitrary labels, not Eureka service ids - they only have to
@@ -27,7 +27,7 @@ public class CustomCircuitBreakerConfig {
     public static final String PRODUCT_SERVICE_CB = "product-service";
     public static final String USER_SERVICE_CB = "user-service";
 
-    @Bean
+    //@Bean
     public Customizer<Resilience4JCircuitBreakerFactory> downstreamServicesCustomizer() {
         return factory -> factory.configure(builder -> builder
                         .circuitBreakerConfig(CircuitBreakerConfig.custom()
