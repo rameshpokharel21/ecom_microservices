@@ -15,10 +15,58 @@ app:
   order:
     message: "hello-order-v2"
 
-#No circuit-breaker config here on purpose: the breakers are built in Java, by the
-#Customizer<Resilience4JCircuitBreakerFactory> bean in CustomCircuitBreakerConfig.
+#Circuit breakers for the two services order-service calls out to.
 #
-#The actuator endpoints need no config either. Both are declared @Endpoint(id="circuitbreakers")
+#Everything is configured here rather than in Java. The @CircuitBreaker annotations on
+#ProductLookup.getProduct and UserLookup.getUser carry only a name; that name is looked up
+#against the instances: block below. A name with no matching instance is NOT an error -
+#resilience4j falls back to configs.default - so a typo shows up as a breaker that quietly
+#uses the wrong settings rather than as a startup failure.
+#
+#Because this file is served by the config server, these values can be changed and pushed
+#with the /actuator/busrefresh bus without rebuilding the image.
+#
+#The actuator endpoints need no config. They are declared @Endpoint(id="circuitbreakers")
 #and @Endpoint(id="circuitbreakerevents") with no enableByDefault=false, so unlike the
 #gateway's routes endpoint they are on by default and the exposure include:"*" in the
 #shared application.yml is already enough to reach them.
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        # count-based: with low traffic a time-based window is usually empty, so rates
+        # never get computed and the breaker never opens
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 10
+        # resilience4j's own default is 100, which means the breaker would never open in
+        # a demo. 5 makes it observable.
+        minimum-number-of-calls: 5
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 10s
+        permitted-number-of-calls-in-half-open-state: 3
+        # without this, OPEN -> HALF_OPEN only happens when a call arrives after the wait
+        # duration; with it a scheduler does the transition, so it is visible in actuator
+        # even with no traffic
+        automatic-transition-from-open-to-half-open-enabled: true
+        # The annotation applies no TimeLimiter, unlike CircuitBreakerFactory.run() which
+        # wrapped every call in a 1-second one. These two are the annotation-era
+        # replacement: a call slower than the threshold is recorded as a failure and can
+        # open the breaker. Note it records, it does not abort - the caller still waits.
+        slow-call-duration-threshold: 4s
+        slow-call-rate-threshold: 50
+        # publishes breaker state into /actuator/health. Safe here because order-service
+        # has no compose healthcheck, so an OPEN breaker cannot get the container killed.
+        register-health-indicator: true
+        # a 404 means "no such product/user", not "the service is broken", so it must not
+        # push the breaker towards OPEN. Ignored exceptions are recorded as neither
+        # success nor failure - and they still propagate, so the fallback methods in
+        # ProductLookup/UserLookup still turn them into the usual 404 responses.
+        # $ is the nested-class separator: NotFound is an inner class of
+        # HttpClientErrorException.
+        ignore-exceptions:
+          - org.springframework.web.client.HttpClientErrorException$NotFound
+    instances:
+      product-service:
+        base-config: default
+      user-service:
+        base-config: default

@@ -1,87 +1,54 @@
 package com.ramesh.order.services;
 
 
-import com.ramesh.order.clients.ProductServiceClient;
-import com.ramesh.order.clients.UserServiceClient;
+import com.ramesh.order.clients.ProductLookup;
+import com.ramesh.order.clients.UserLookup;
 import com.ramesh.order.dtos.CartItemRequest;
 import com.ramesh.order.dtos.CartItemResponse;
 import com.ramesh.order.dtos.ProductResponse;
-import com.ramesh.order.dtos.UserResponse;
 import com.ramesh.order.entities.CartItem;
 import com.ramesh.order.exceptions.InsufficientStockException;
 import com.ramesh.order.exceptions.ProductNotFoundException;
-import com.ramesh.order.exceptions.ServiceUnavailableException;
 import com.ramesh.order.exceptions.UserNotFoundException;
 import com.ramesh.order.mappers.CartItemMapper;
 import com.ramesh.order.repositories.CartItemRepository;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.cloud.client.circuitbreaker.CircuitBreakerFactory;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.HttpClientErrorException;
 
 import java.util.List;
-
-import static com.ramesh.order.config.CustomCircuitBreakerConfig.PRODUCT_SERVICE_CB;
-import static com.ramesh.order.config.CustomCircuitBreakerConfig.USER_SERVICE_CB;
 
 @Service
 @RequiredArgsConstructor
 @Transactional
 public class  CartService {
 
-    private static final Logger logger = LoggerFactory.getLogger(CartService.class);
-
     private final CartItemRepository cartItemRepository;
     private final CartItemMapper cartItemMapper;
-    private final ProductServiceClient productServiceClient;
-    private final UserServiceClient userServiceClient;
-    //Spring Cloud's vendor-neutral factory, backed by Resilience4JCircuitBreakerFactory.
-    //Used instead of @CircuitBreaker so each breaker wraps exactly one remote call rather
-    //than a whole method: the database work and the business rules below must not be able
-    //to trip a breaker named after a downstream service.
-    private final CircuitBreakerFactory<?, ?> circuitBreakerFactory;
+    //The circuit breakers live on these two beans, declared with @CircuitBreaker and
+    //configured entirely in order-service.yml. Nothing in this class knows a breaker
+    //exists: it calls them like ordinary collaborators and handles the same exceptions
+    //it always did.
+    private final ProductLookup productLookup;
+    private final UserLookup userLookup;
 
+    //Still private. The breaker is not on this method - it is on UserLookup.getUser, which
+    //is a different bean, so the AOP proxy is crossed even though this call is internal.
+    //Annotating a private (or self-invoked public) method here would have been silently
+    //inert instead.
     private void ensureUserExists(String userId) {
-        ResponseEntity<UserResponse> userResponse = circuitBreakerFactory
-                .create(USER_SERVICE_CB)
-                .run(() -> userServiceClient.getUserById(userId),
-                        throwable -> {
-                            //404 is a real answer from a healthy service, so keep the
-                            //existing semantics rather than reporting an outage
-                            if (throwable instanceof HttpClientErrorException.NotFound) {
-                                throw new UserNotFoundException("User with id " + userId + " not found");
-                            }
-                            logger.warn("user-service call failed for userId={}: {}", userId, throwable.toString());
-                            throw new ServiceUnavailableException("user-service", throwable);
-                        });
-
-        if (userResponse == null || userResponse.getBody() == null) {
+        if (userLookup.getUser(userId) == null) {
             throw new UserNotFoundException("User with id " + userId + " not found");
         }
     }
 
     public void addToCart(String userId, CartItemRequest request) {
 
-        //parsed outside the breaker: a malformed id is a bad request, not a
-        //product-service failure, and must not count against the breaker
+        //parsed here rather than inside ProductLookup: a malformed id is a bad request,
+        //not a product-service failure, and must not count against the breaker
         Long productId = Long.valueOf(request.getProductId());
 
-        ProductResponse productResponse = circuitBreakerFactory
-                .create(PRODUCT_SERVICE_CB)
-                .run(() -> productServiceClient.getProductById(productId).getBody(),
-                        throwable -> {
-                            if (throwable instanceof HttpClientErrorException.NotFound) {
-                                throw new ProductNotFoundException(
-                                        "Product with id " + request.getProductId() + " does not exist");
-                            }
-                            logger.warn("product-service call failed for productId={}: {}",
-                                    productId, throwable.toString());
-                            throw new ServiceUnavailableException("product-service", throwable);
-                        });
+        ProductResponse productResponse = productLookup.getProduct(productId);
 
         if(productResponse == null){
             throw new ProductNotFoundException("Product with id " + request.getProductId() + " does not exist");
