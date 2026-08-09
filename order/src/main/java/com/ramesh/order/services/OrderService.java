@@ -12,8 +12,7 @@ import com.ramesh.order.mappers.OrderMapper;
 import com.ramesh.order.repositories.OrderRepository;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -33,12 +32,11 @@ public class OrderService {
     private final OrderRepository orderRepository;
     private final OrderMapper orderMapper;
     private final OrderItemMapper orderItemMapper;
-    private final RabbitTemplate rabbitTemplate;
 
-    @Value("${rabbitmq.exchange.name}")
-    private String exchangeName;
-    @Value("${rabbitmq.routing.key}")
-    private String routingKey;
+    //Not a RabbitTemplate. This service knows nothing about AMQP now - it announces that
+    //an order was created and OrderEventPublisher decides what that means. Keeping the
+    //broker out of here is what lets the publish move to after the commit.
+    private final ApplicationEventPublisher eventPublisher;
 
 
     public Optional<OrderResponse> createOrder(String userId) {
@@ -61,8 +59,19 @@ public class OrderService {
         order.setItems(orderItems);
         Order savedOrder = orderRepository.save(order);
 
-        //After order is created and saved
-        //publish order created event as producer with RabbitMQ
+        //The event is BUILT here, inside the transaction, and sent later, after the
+        //commit. Both halves of that matter.
+        //
+        //Built here because everything it needs is entity state: getItems() is a lazy
+        //JPA collection, so reading it after the transaction closes would throw
+        //LazyInitializationException. Flattening it into DTOs now makes the event a
+        //self-contained snapshot that survives the commit - which is also why this
+        //publishes the DTO rather than the Order entity itself.
+        //
+        //Sent later because publishEvent only hands the event to Spring.
+        //OrderEventPublisher is annotated AFTER_COMMIT, so nothing reaches RabbitMQ
+        //until this transaction has actually committed. If anything below throws - or
+        //the commit itself fails - the listener never runs and no event is emitted.
         OrderCreatedEvent event = new OrderCreatedEvent(
                 savedOrder.getId(),
                 savedOrder.getUserId(),
@@ -72,10 +81,12 @@ public class OrderService {
                 savedOrder.getCreatedAt()
 
         );
-        rabbitTemplate.convertAndSend(exchangeName, routingKey, event);
+        eventPublisher.publishEvent(event);
 
 
-        //clear the cart
+        //clear the cart. Its position relative to publishEvent above no longer matters:
+        //when the publish was a direct convertAndSend, a throw here meant the order
+        //rolled back but the message was already gone.
         cartService.clearCart(userId);
 
         return Optional.of(orderMapper.toResponse(savedOrder));

@@ -11,6 +11,18 @@ spring:
     hibernate:
       ddl-auto: update
     show-sql: true
+  #Only the timeout lives here. Host, port, username and password come from
+  #docker-compose environment variables (SPRING_RABBITMQ_*), because they include the
+  #password - see details.md §21.1.
+  #
+  #The client default is 60 SECONDS. That never mattered while the publish sat on the
+  #request thread and blew up the transaction anyway, but now that OrderEventPublisher
+  #is @Async it decides how long a task-executor thread is parked when the broker is
+  #down. With Boot's default pool that is a slow path to exhausting the pool and
+  #queueing every subsequent publish behind it. Measured at 3.7s with the container
+  #stopped; 2s caps it below that and well below the gateway's 5s TimeLimiter.
+  rabbitmq:
+    connection-timeout: 2s
 app:
   order:
     message: "hello-order-v2"

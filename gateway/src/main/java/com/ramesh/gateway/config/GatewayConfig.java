@@ -26,8 +26,10 @@ public class GatewayConfig {
     private final static String USER_CB = "userServiceCB";
     private final static String ORDER_CB = "orderServiceCB";
 
-    //replenishRate=1/s, burstCapacity=1, requestedTokens=1: one request per second per
-    //key, no burst allowance. Deliberately strict so JMeter shows 429s immediately.
+    //RedisRateLimiter(replenishRate, burstCapacity, requestedTokens): 10 requests per
+    //second sustained per key, 20 in a burst, each request costing one token. Was
+    //(1, 1, 1) while the limiter was being debugged - strict enough that a single
+    //extra request showed a 429 immediately instead of statistically.
     //
     //This bean shadows the one in GatewayRedisAutoConfiguration, which is
     //@ConditionalOnMissingBean, so there is no clash. The three-arg constructor leaves
