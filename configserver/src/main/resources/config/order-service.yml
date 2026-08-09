@@ -74,3 +74,11 @@ resilience4j:
         base-config: default
       user-service:
         base-config: default
+
+rabbitmq:
+  exchange:
+    name: order.exchange
+  queue:
+    name: order.queue
+  routing:
+    key: order.tracking

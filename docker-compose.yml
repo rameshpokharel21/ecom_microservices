@@ -23,6 +23,46 @@ services:
       retries: 10
     restart: unless-stopped
 
+  redis-server:
+    container_name: ecom_redis
+    image: redis:8
+    ports:
+      #loopback only. Redis here has no requirepass, and an open unauthenticated Redis
+      #is not just a data leak: CONFIG SET dir/dbfilename lets an attacker write
+      #arbitrary files as the redis user. Plain "6379:6379" binds 0.0.0.0 and hands
+      #that to the whole LAN. The gateway does not need this mapping at all - it
+      #reaches redis-server:6379 over ecom-network - so it exists only for redis-cli
+      #and RedisInsight from the host. Same rule as 7073 and 9093.
+
+      - "127.0.0.1:6379:6379"
+
+    #no persistence: the only thing stored is rate-limiter token buckets
+    #(request_rate_limiter.{key}.tokens), which are per-second state that SHOULD be
+    #empty after a restart. The image default is "save 3600 1 300 100 60 10000" with
+    #stop-writes-on-bgsave-error yes, and that default is a trap here: if a snapshot
+    #ever fails, Redis refuses all writes with MISCONF, the limiter's Lua script errors,
+    #and RedisRateLimiter fails OPEN - the same silent no-limiting symptom as a wrong
+    #host. Turning persistence off removes the failure mode instead of monitoring it.
+
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+
+    #no volumes, deliberately. redis_data:/data/redis_db persisted nothing - redis
+    #writes dump.rdb to /data (its WORKDIR), so that mount only created an empty
+    #root-owned directory. redis_data:/data/dump.rdb is worse: a named volume always
+    #mounts as a DIRECTORY, so dump.rdb becomes a directory, the snapshot rename fails
+    #with EISDIR, and stop-writes-on-bgsave-error trips the MISCONF case above.
+    #This image declares no VOLUME, so with persistence off nothing is written and no
+    #anonymous volume appears either.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - ecom-network
+    restart: unless-stopped
+
   mongodb:
     container_name: ecom_mongodb
     image: mongodb/mongodb-community-server:8.0-ubi8
@@ -110,6 +150,8 @@ services:
       config-server:
         condition: service_healthy
       eureka-server:
+        condition: service_healthy
+      redis-server:
         condition: service_healthy
     environment:
       SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
@@ -229,6 +271,33 @@ services:
       - ecom-network
 
     restart: unless-stopped
+
+  #notification service
+  notification-service:
+    build:
+      context: ./notification
+    ports:
+      - "127.0.0.1:${NOTIFICATION_PORT}:8084"
+    container_name: ecom_notification
+    depends_on:
+      config-server:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      eureka-server:
+        condition: service_healthy
+    environment:
+      SPRING_RABBITMQ_HOST: rabbitmq
+      SPRING_RABBITMQ_PORT: 5672
+      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
+      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
+      SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
+    volumes:
+      - ./logs/notification-service:/app/logs
+    networks:
+      - ecom-network
+    restart: unless-stopped
+
 
   # eureka server
   eureka-server:

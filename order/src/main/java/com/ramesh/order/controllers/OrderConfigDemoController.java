@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RefreshScope
 @RestController
-@RequestMapping("/api/order/demo")
+@RequestMapping("/api/orders/demo")
 public class OrderConfigDemoController {
     @Value("${app.order.message}")
     private String orderMessage;

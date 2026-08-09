@@ -1,15 +1,19 @@
 package com.ramesh.order.services;
 
+import com.ramesh.order.dtos.OrderCreatedEvent;
 import com.ramesh.order.dtos.OrderItemDto;
 import com.ramesh.order.dtos.OrderResponse;
 import com.ramesh.order.entities.CartItem;
 import com.ramesh.order.entities.Order;
 import com.ramesh.order.entities.OrderItem;
 import com.ramesh.order.entities.OrderStatus;
+import com.ramesh.order.mappers.OrderItemMapper;
 import com.ramesh.order.mappers.OrderMapper;
 import com.ramesh.order.repositories.OrderRepository;
 import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -23,10 +27,19 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class OrderService {
 
+
     private final CartService cartService;
 
     private final OrderRepository orderRepository;
     private final OrderMapper orderMapper;
+    private final OrderItemMapper orderItemMapper;
+    private final RabbitTemplate rabbitTemplate;
+
+    @Value("${rabbitmq.exchange.name}")
+    private String exchangeName;
+    @Value("${rabbitmq.routing.key}")
+    private String routingKey;
+
 
     public Optional<OrderResponse> createOrder(String userId) {
 
@@ -48,10 +61,30 @@ public class OrderService {
         order.setItems(orderItems);
         Order savedOrder = orderRepository.save(order);
 
+        //After order is created and saved
+        //publish order created event as producer with RabbitMQ
+        OrderCreatedEvent event = new OrderCreatedEvent(
+                savedOrder.getId(),
+                savedOrder.getUserId(),
+                savedOrder.getStatus(),
+                mapToOrderItemDtos(savedOrder.getItems()),
+                savedOrder.getTotalAmount(),
+                savedOrder.getCreatedAt()
+
+        );
+        rabbitTemplate.convertAndSend(exchangeName, routingKey, event);
+
+
         //clear the cart
         cartService.clearCart(userId);
 
         return Optional.of(orderMapper.toResponse(savedOrder));
+    }
+
+    private List<OrderItemDto> mapToOrderItemDtos(List<OrderItem> items){
+        return items.stream()
+                .map(item -> orderItemMapper.toOrderItemDto(item))
+                .toList();
     }
 
     private List<OrderItem> buildOrderItems(List<CartItem> cartItems, Order order){

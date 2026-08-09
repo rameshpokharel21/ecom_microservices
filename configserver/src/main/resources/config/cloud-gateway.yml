@@ -1,6 +1,28 @@
 server:
   port: 8080
 
+#RedisRateLimiter talks to Redis through the ReactiveStringRedisTemplate that
+#spring-boot-starter-data-redis-reactive auto-configures. Its default host is
+#localhost, which inside the gateway CONTAINER means the gateway itself - so every
+#rate-limit check failed with "Connection refused: localhost/127.0.0.1:6379".
+#
+#That failure is silent by design: RedisRateLimiter.isAllowed puts an onErrorResume
+#on the Lua call which logs "Error calling rate limiter lua" and returns [1, -1],
+#i.e. ALLOWED. The limiter fails OPEN, so a broken Redis connection looks exactly
+#like a rate limiter that is switched off. Grep the gateway log for that message
+#whenever limiting stops working.
+#
+#redis-server is the compose service name, resolved by Docker's DNS on ecom-network.
+spring:
+  data:
+    redis:
+      host: redis-server
+      port: 6379
+      #the Lua script is one round trip per request and sits on the hot path; a
+      #hung connect must not stall the reactor thread longer than a request.
+      timeout: 2s
+      connect-timeout: 2s
+
 management:
   endpoint:
     #route-listing endpoint is disabled by default; exposure ("*" in the shared
