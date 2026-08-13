@@ -18,11 +18,23 @@ spring:
         publishOrderCreated-out-0:
           destination: order.exchange
           content-type: application/json
-      rabbit:
-        bindings:
-          publishOrderCreated-out-0:
-            producer:
-              routing-key-expression: '''order.tracking'''
+      kafka:
+        binder:
+          #See config/notification-service.yml for the full note. localhost:29092 is the
+          #host-side listener for IDE runs; docker-compose.yml overrides it with
+          #KAFKA_BROKERS=kafka:9092 for the compose network.
+          brokers: ${KAFKA_BROKERS:localhost:29092}
+
+#The Rabbit producer block below has no Kafka equivalent and is kept only as a marker of
+#what did NOT port. A topic exchange routes on a key with wildcards; Kafka has no routing
+#layer at all - the nearest concept is partition-key-expression, which chooses a PARTITION
+#within one topic and so controls ordering and consumer assignment, not delivery. Filtering
+#by event type has to move into the payload, into headers, or into separate topics.
+#      rabbit:
+#        bindings:
+#          publishOrderCreated-out-0:
+#            producer:
+#              routing-key-expression: '''order.tracking'''
 
   #Only the timeout lives here. Host, port, username and password come from
   #docker-compose environment variables (SPRING_RABBITMQ_*), because they include the

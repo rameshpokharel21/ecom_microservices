@@ -19,26 +19,40 @@ spring:
     stream:
       bindings:
         orderCreated-in-0:
+          #With the Kafka binder this is a TOPIC name, not an exchange. "order.exchange"
+          #is a legal Kafka topic - the allowed characters are [a-zA-Z0-9._-] - but it is
+          #a leftover name from the AMQP version and should be renamed (order.created)
+          #once both sides move together. Kafka also warns about topic names mixing "."
+          #and "_", because it collapses both to "_" in metric names, so two topics can
+          #silently share one metric.
           destination: order.exchange
           content-type: application/json
-          #group is what makes this a real subscription rather than a tap.
+          #group belongs on the BINDING, not on the binder - it briefly sat under
+          #kafka.binder, where no such property exists, so it was accepted and ignored.
+          #It is also binder-INDEPENDENT: this line is unchanged from the RabbitMQ
+          #version, and it is what §22.4 was about.
           #
-          #Without it the binder creates an ANONYMOUS, AUTO-DELETE, exclusive queue -
-          #verified on the broker as order.exchange.anonymous.ltM6SZplQyu55LQB0YxkDg.
-          #It vanishes when notification-service disconnects, so anything published
-          #while the service is down is gone for good. That silently threw away the
-          #durability the @RabbitListener version had, and it is the single most common
-          #way a Spring Cloud Stream demo ends up losing messages.
+          #What it means does change underneath. On Rabbit it produced a durable queue
+          #order.exchange.notification. On Kafka it is the native CONSUMER GROUP: the
+          #broker tracks this group's committed offset per partition, so a restart
+          #resumes where it left off, and a second instance in the same group is given
+          #a share of the partitions rather than a copy of the messages.
           #
-          #With a group, the queue is durable and named <destination>.<group>, i.e.
-          #order.exchange.notification. It survives restarts and accumulates messages
-          #while the consumer is away. It is also the unit of competing consumption:
-          #a second notification-service instance shares this queue and the two split
-          #the load. A different group would get its OWN queue and a full copy of every
-          #message - that is how fan-out is expressed here, not by a second binding.
+          #Without it Stream invents an anonymous group and sets startOffset to latest,
+          #so a restart silently skips everything published while the service was down -
+          #the same class of message loss as the anonymous auto-delete queue on Rabbit,
+          #reached by a completely different mechanism.
           group: notification
-
-#The rabbitmq.exchange.name / queue.name / routing.key block that used to live here is
-#gone with RabbitMQConfig, which was its only consumer. The topology is now entirely
-#the binder's: destination + group above produce the durable queue
-#order.exchange.notification, bound to order.exchange with #.
+      kafka:
+        binder:
+          #Connection only. localhost:29092 is the HOST-side address, matching the
+          #PLAINTEXT_HOST advertised listener, so running this service from the IDE
+          #works with no extra config. Inside a container localhost is the container
+          #itself, so docker-compose.yml overrides this with KAFKA_BROKERS=kafka:9092,
+          #the PLAINTEXT listener advertised on the compose network.
+          #
+          #Getting this wrong does not look like a connection error. The AdminClient
+          #just never reaches a broker and the binding fails as
+          #"ProvisioningException: Provisioning exception encountered for order.exchange
+          #... Caused by: TimeoutException", which reads like a topic problem.
+          brokers: ${KAFKA_BROKERS:localhost:29092}

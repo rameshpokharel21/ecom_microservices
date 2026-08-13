@@ -83,6 +83,64 @@ services:
       start_period: 10s
     restart: unless-stopped
 
+  #kafka
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: ecom_kafka
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    environment:
+      #Kraft
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:29093"
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+
+      #Listeners
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:29093,PLAINTEXT_HOST://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+
+      #Storage(same as in volumes)
+      KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+      #cluster metadata
+      CLUSTER_ID: "mBrNMiZzQ7ihee_MZJ7FcQ"
+      #Broker Settings(for 1 broker)
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # was KAFKA_GROUP_INITIAL_REBLANCE_DELAY_MS - "REBLANCE". Unknown KAFKA_* variables
+      # are not an error: the image's configure script only translates names it knows, so
+      # a misspelling is dropped and the broker starts with the 3s default. Only matters
+      # for how fast a single-broker dev group forms, but it is the same silent-typo
+      # failure mode as the healthcheck below and the binding name in details.md §22.3.
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      # kafka-broker-api-versions, with a HYPHEN. It was kafka_broker-api-versions, which
+      # exits 126 "executable file not found in $PATH" on every probe - so the container
+      # ran perfectly ("Kafka Server started" in the logs, both listeners accepting) but
+      # never turned healthy, and every service with depends_on: condition: service_healthy
+      # sat waiting on it. A broken healthcheck looks exactly like a broken service.
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:29092"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    # Without this, Compose puts kafka on the implicit default network while every other
+    # service is on ecom-network, so "kafka" does not resolve from order/notification.
+    # The symptom is not a DNS error but
+    # "ConfigException: No resolvable bootstrap urls given in bootstrap.servers",
+    # wrapped in "Failed to create new KafkaAdminClient" and then in a Stream
+    # BinderException - three layers away from the actual cause.
+    networks:
+      - ecom-network
+    restart: unless-stopped
+
+
+
   rabbitmq:
     container_name: rabbitmq
     image: rabbitmq:management
@@ -255,6 +313,8 @@ services:
         condition: service_healthy
       eureka-server:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
 
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${ORDER_DB}
@@ -264,6 +324,10 @@ services:
       SPRING_RABBITMQ_PORT: 5672
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
+      # Overrides the localhost:29092 default in config/order-service.yml. Inside a
+      # container localhost is the container itself; kafka:9092 is the PLAINTEXT
+      # listener advertised on this network.
+      KAFKA_BROKERS: kafka:9092
       SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
     volumes:
       - ./logs/order-service:/app/logs
@@ -286,11 +350,15 @@ services:
         condition: service_healthy
       eureka-server:
         condition: service_healthy
+      kafka:
+        condition: service_healthy
     environment:
       SPRING_RABBITMQ_HOST: rabbitmq
       SPRING_RABBITMQ_PORT: 5672
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
+      # Overrides the localhost:29092 default in config/notification-service.yml.
+      KAFKA_BROKERS: kafka:9092
       SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
     volumes:
       - ./logs/notification-service:/app/logs
@@ -356,4 +424,5 @@ volumes:
   postgres_data:
   mongo_data:
   rabbitmq_data:
+  kafka-data:
   #pgadmin_data:
