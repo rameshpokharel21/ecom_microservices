@@ -11,6 +11,19 @@ spring:
     hibernate:
       ddl-auto: update
     show-sql: true
+
+  cloud:
+    stream:
+      bindings:
+        publishOrderCreated-out-0:
+          destination: order.exchange
+          content-type: application/json
+      rabbit:
+        bindings:
+          publishOrderCreated-out-0:
+            producer:
+              routing-key-expression: '''order.tracking'''
+
   #Only the timeout lives here. Host, port, username and password come from
   #docker-compose environment variables (SPRING_RABBITMQ_*), because they include the
   #password - see details.md §21.1.
@@ -87,10 +100,7 @@ resilience4j:
       user-service:
         base-config: default
 
-rabbitmq:
-  exchange:
-    name: order.exchange
-  queue:
-    name: order.queue
-  routing:
-    key: order.tracking
+#The rabbitmq.exchange.name / queue.name / routing.key block that used to live here is
+#gone with RabbitMQConfig, which was its only consumer once OrderEventPublisher moved to
+#StreamBridge. The exchange is now spring.cloud.stream.bindings...destination above, and
+#the routing key is the routing-key-expression beside it.

@@ -4,9 +4,8 @@ import com.ramesh.order.dtos.OrderCreatedEvent;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.amqp.AmqpException;
-import org.springframework.amqp.rabbit.core.RabbitTemplate;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.cloud.stream.function.StreamBridge;
+import org.springframework.messaging.MessagingException;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.event.TransactionPhase;
@@ -34,12 +33,26 @@ public class OrderEventPublisher {
 
     private static final Logger logger = LoggerFactory.getLogger(OrderEventPublisher.class);
 
-    private final RabbitTemplate rabbitTemplate;
+    //MUST match a key under spring.cloud.stream.bindings in config/order-service.yml.
+    //
+    //A constant rather than a literal at the call site because StreamBridge does NOT
+    //validate this name. An unrecognised name is not an error - it is treated as a
+    //DYNAMIC DESTINATION, so the binder creates a brand-new topic exchange named after
+    //whatever string was passed and publishes there. Nothing is bound to it, and an
+    //unroutable message on a topic exchange is discarded without a word. A typo here
+    //("publishOrderCreate-out-0", missing the d) cost an afternoon: every send returned
+    //true, the broker grew a phantom publishOrderCreate-out-0 exchange with no bindings,
+    //and notification-service sat idle on a correctly configured queue.
+    private static final String BINDING = "publishOrderCreated-out-0";
 
-    @Value("${rabbitmq.exchange.name}")
-    private String exchangeName;
-    @Value("${rabbitmq.routing.key}")
-    private String routingKey;
+    private final StreamBridge streamBridge;
+
+//    private final RabbitTemplate rabbitTemplate;
+//
+//    @Value("${rabbitmq.exchange.name}")
+//    private String exchangeName;
+//    @Value("${rabbitmq.routing.key}")
+//    private String routingKey;
 
     //@Async is the second half of the fix, and it is not decoration.
     //
@@ -69,7 +82,15 @@ public class OrderEventPublisher {
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     public void publishOrderCreated(OrderCreatedEvent event) {
         try {
-            rabbitTemplate.convertAndSend(exchangeName, routingKey, event);
+            //rabbitTemplate.convertAndSend(exchangeName, routingKey, event);
+            //
+            //The exchange and routing key are no longer named here. The binding in
+            //config/order-service.yml carries destination: order.exchange and
+            //routing-key-expression: 'order.tracking', so this class no longer knows it
+            //is talking to RabbitMQ at all - that is the point of Stream's binder
+            //abstraction. Note the boolean return means "handed to the channel", not
+            //"the broker accepted it"; see the comment on the catch below.
+            streamBridge.send(BINDING, event);
             logger.debug("Published OrderCreatedEvent for order {}", event.getOrderId());
         }
         //Swallowing is deliberate, and it is the whole reason this method exists.
@@ -87,9 +108,17 @@ public class OrderEventPublisher {
         //same transaction, poll and publish it separately) is the fix that survives a
         //broker outage; it needs a table, a scheduler, and idempotent consumers.
         //
-        //AmqpException, not Exception: it covers both the connection failures and
-        //MessageConversionException, which extends it, without hiding an NPE in here.
-        catch (AmqpException e) {
+        //MessagingException, not AmqpException. This changed when the send moved to
+        //StreamBridge and it is easy to miss, because the old catch still COMPILES - it
+        //just never fires. StreamBridge hands the message to a Spring Integration
+        //channel, and AbstractMessageHandler wraps whatever the outbound endpoint throws
+        //in a MessageHandlingException. So the AmqpException from a dead broker arrives
+        //here as the CAUSE of a MessagingException, not as itself. Left unchanged, the
+        //at-most-once safety net below would have gone silently dead: no LOST log, and
+        //the exception escaping into the @Async executor's uncaught handler instead.
+        //
+        //MessagingException rather than Exception keeps an NPE in this method visible.
+        catch (MessagingException e) {
             logger.error("LOST OrderCreatedEvent for order {}: the order is committed but the "
                     + "event could not be published, so no consumer will ever see it. "
                     + "Requires manual reconciliation.", event.getOrderId(), e);

@@ -2,10 +2,43 @@
 server:
   port: 8084
 
-rabbitmq:
-  exchange:
-    name: order.exchange
-  queue:
-    name: order.queue
-  routing:
-    key: order.tracking
+spring:
+  cloud:
+    #Names the java.util.function.Consumer bean to bind. The bean is
+    #OrderEventConsumer.orderCreated(), so the binding names Stream derives are
+    #orderCreated-in-0 (input) and orderCreated-out-0 (output, unused here).
+    #
+    #Only spring.cloud.function.definition is correct. spring.cloud.stream.function
+    #.definition was the Spring Cloud Stream 3.x spelling and is gone in 4.x/2025.x -
+    #it binds to nothing and is ignored in silence, so it was removed rather than kept
+    #"just in case". With exactly one function bean on the classpath this property is
+    #strictly optional, but being explicit means adding a second Consumer later fails
+    #loudly instead of picking one at random.
+    function:
+      definition: orderCreated
+    stream:
+      bindings:
+        orderCreated-in-0:
+          destination: order.exchange
+          content-type: application/json
+          #group is what makes this a real subscription rather than a tap.
+          #
+          #Without it the binder creates an ANONYMOUS, AUTO-DELETE, exclusive queue -
+          #verified on the broker as order.exchange.anonymous.ltM6SZplQyu55LQB0YxkDg.
+          #It vanishes when notification-service disconnects, so anything published
+          #while the service is down is gone for good. That silently threw away the
+          #durability the @RabbitListener version had, and it is the single most common
+          #way a Spring Cloud Stream demo ends up losing messages.
+          #
+          #With a group, the queue is durable and named <destination>.<group>, i.e.
+          #order.exchange.notification. It survives restarts and accumulates messages
+          #while the consumer is away. It is also the unit of competing consumption:
+          #a second notification-service instance shares this queue and the two split
+          #the load. A different group would get its OWN queue and a full copy of every
+          #message - that is how fan-out is expressed here, not by a second binding.
+          group: notification
+
+#The rabbitmq.exchange.name / queue.name / routing.key block that used to live here is
+#gone with RabbitMQConfig, which was its only consumer. The topology is now entirely
+#the binder's: destination + group above produce the durable queue
+#order.exchange.notification, bound to order.exchange with #.
