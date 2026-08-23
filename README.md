@@ -687,11 +687,54 @@ With the observability stack running:
 
 Services expose `/actuator/prometheus` on internal port 9090.
 
+### Logs — files and rotation
+
+Every service writes to `logs/<service-name>/<service-name>.log` on the host
+(each container mounts its own subdirectory at `/app/logs`). Rotation is
+configured once, in the shared config:
+
+```yaml
+logging:
+  file:
+    name: logs/${spring.application.name}.log
+  logback:
+    rollingpolicy:
+      file-name-pattern: ${LOG_FILE}.%d{yyyy-MM-dd}.%i.log
+      max-file-size: 5MB
+      max-history: 7
+      total-size-cap: 50MB
+```
+
+Reading those four lines:
+
+| setting | effect |
+|---|---|
+| `file-name-pattern` | rolls **daily**; `%i` is the within-day counter used if 5MB is hit |
+| `max-file-size` | 5MB — in practice never reached; the largest live log is ~200KB |
+| `max-history` | keeps **7 days** (the unit comes from the date pattern, not from the number) |
+| `total-size-cap` | deletes oldest-first if archives exceed 50MB per service |
+
+Archives are plain `.log`, **not** `.gz`. Spring Boot's default pattern ends in
+`.gz`, which Windows File Explorer cannot open — dropping the suffix keeps
+archives double-clickable at the cost of ~14× the disk. Real usage is ~15MB for
+7 days across all seven services, so the cap never trips.
+
+The setting is duplicated in two files, and both are inside the config-server
+module:
+
+| file | applies to |
+|---|---|
+| `configserver/src/main/resources/application.yaml` | config-server itself |
+| `configserver/src/main/resources/config/application.yml` | every other service |
+
+The duplicate exists because config-server cannot fetch config from itself. A
+rolling-policy change is **not** picked up by `/actuator/busrefresh` — Logback
+builds its appender at startup, so it needs a restart.
+
 ### Logs — Loki
 
-Every service writes to `logs/<service-name>/<service-name>.log`, which is
-mounted into Alloy and shipped to Loki. Query in Grafana by the `service_name`
-label:
+The same `logs/` tree is mounted into Alloy and shipped to Loki. Query in Grafana
+by the `service_name` label:
 
 ```logql
 {service_name="cloud-gateway"}
@@ -854,6 +897,17 @@ the order response. If the group does not exist at all, the binding name is wron
 Stream 3.x spelling `spring.cloud.stream.function.definition` binds nothing **in
 silence**.
 
+**An order call hangs instead of failing**
+It should now abort at 5s: order-service sets `spring.http.clients.read-timeout:
+5s` in `config/order-service.yml`. Before that there was no timeout at all, and
+the circuit breaker does not supply one — `slow-call-duration-threshold`
+classifies a call as slow *after it finishes*, it never interrupts one in flight,
+and the `@CircuitBreaker` annotation applies no `TimeLimiter`. To see the timeout
+work, use `docker pause ecom_product` (packets are dropped) rather than
+`docker stop`, which refuses the connection instantly and fails fast either way.
+Note the property is `spring.http.client`**`s`** — plural; the singular form is
+deprecated since Boot 4.0.0 and binds with only a warning.
+
 **Every request to `/api/products` returns 429**
 The gateway rate limiter, working as intended. Reset it with
 `docker exec ecom_redis redis-cli flushall`, or raise the limits in
@@ -895,7 +949,8 @@ ecom_microservices/
 │                          #                   publishes OrderCreatedEvent to Kafka
 ├── notification/          # notification-service — Kafka consumer, no HTTP API
 ├── evaluate-prometheus/   # Grafana + Prometheus + Loki + Alloy stack
-├── logs/                  # per-service log output (mounted into Alloy)
+├── logs/                  # per-service log output — daily rotation, 7 days,
+│                          #   plain .log archives (mounted into Alloy)
 ├── docker-compose.yml     # main stack
 ├── init-db.sql            # creates product_db, order_db and keycloak_db on first boot
 ├── details.md             # full technical documentation
@@ -919,3 +974,7 @@ work, and the one thing that will break it.
 resilience and rate limiting, §21–§23 the three messaging iterations (RabbitMQ →
 Spring Cloud Stream → Kafka), and §24 the whole Keycloak story — including the
 id-resolution bug in §24.3 that is the most transferable thing in it.
+§25 is the one section that is not a change log entry: it explains the two
+outbound-HTTP client shapes in the codebase — the discovery-aware
+`@HttpExchange` clients in order-service versus the single-purpose Keycloak
+client in user-service — and when to reach for each.
