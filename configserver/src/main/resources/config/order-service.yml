@@ -48,6 +48,18 @@ spring:
   #stopped; 2s caps it below that and well below the gateway's 5s TimeLimiter.
   rabbitmq:
     connection-timeout: 2s
+
+  #Timeouts for the outbound @HttpExchange clients. Boot's default is NO timeout, and
+  #@CircuitBreaker does not add one - slow-call-duration-threshold only RECORDS a slow
+  #call, it never aborts it, so before this a hung product-service parked the request
+  #thread forever. Read 5s sits above the 4s slow-call threshold (so slow calls are still
+  #classed slow rather than aborted first) and no higher than the gateway's 5s
+  #TimeLimiter, which has already given up by then. Note spring.http.client.* is
+  #deprecated since Boot 4.0.0 - the current prefix is spring.http.clientS.
+  http:
+    clients:
+      connect-timeout: 2s
+      read-timeout: 5s
 app:
   order:
     message: "hello-order-v2"

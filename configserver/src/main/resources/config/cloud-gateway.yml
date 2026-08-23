@@ -22,6 +22,37 @@ spring:
       #hung connect must not stall the reactor thread longer than a request.
       timeout: 2s
       connect-timeout: 2s
+  #Keycloak as the JWT issuer. The gateway is a RESOURCE SERVER only: it validates
+  #bearer tokens, it never redirects anyone to a login page. That is why the
+  #dependency is spring-boot-starter-security-oauth2-resource-server and not
+  #...-oauth2-client (note the Boot 4 name: Boot 3 called it
+  #spring-boot-starter-oauth2-resource-server, without the "security-").
+  #
+  #These two properties look redundant and are not. They answer different questions:
+  #
+  #  issuer-uri  = the string that must EQUAL the token's "iss" claim.
+  #  jwk-set-uri = the URL the gateway actually CONNECTS to for signing keys.
+  #
+  #They have to differ here because the token and the validator see Keycloak from
+  #different networks. A token is fetched from a browser/Postman on the HOST, so
+  #Keycloak stamps iss=http://localhost:8443/realms/ecom-app. But inside the gateway
+  #CONTAINER "localhost" is the gateway itself - the same trap as the Redis host
+  #above and KAFKA_BROKERS in order-service.yml - so that URL is unreachable for
+  #fetching keys. keycloak:8080 is the compose service name and the container port
+  #(8443 is only the HOST-side publish).
+  #
+  #Setting both is what makes this work rather than a hack: when jwk-set-uri is
+  #present Boot builds the decoder from it directly and never calls the discovery
+  #endpoint, then applies JwtValidators.createDefaultWithIssuer(issuer-uri) on top.
+  #So keys come from the reachable URL and the iss claim is still checked strictly.
+  #Drop issuer-uri and the iss claim stops being validated at all - a token from any
+  #realm signed by these keys would be accepted.
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: http://localhost:8443/realms/ecom-app
+          jwk-set-uri: ${KEYCLOAK_JWK_SET_URI:http://localhost:8443/realms/ecom-app/protocol/openid-connect/certs}
 
 management:
   endpoint:
@@ -102,9 +133,7 @@ resilience4j:
         # To make downstream status codes count as failures, add
         # .setStatusCodes(...) to the route filter instead.
     instances:
-      # one breaker per downstream service. Sharing a single id across all three routes
-      # would mean product-service failures also open the breaker for /api/users/** and
-      # /api/orders/**.
+      # one breaker per downstream service. not Sharing a single id across all three routes
       productServiceCB:
         base-config: default
       userServiceCB:
@@ -112,11 +141,9 @@ resilience4j:
       orderServiceCB:
         base-config: default
 
-  # The reactive path DOES apply a TimeLimiter, unlike the @CircuitBreaker annotation in
+  # The reactive path DOES apply a TimeLimiter, unlike the @CircuitBreaker annotation
   # order-service: ReactiveResilience4JCircuitBreaker.run() wraps the chain in
-  # Mono.timeout(timeLimiterConfig.getTimeoutDuration()). The default is 1 SECOND, which
-  # a cold downstream JVM will blow through on its first request - the call is aborted
-  # with a TimeoutException, recorded as a failure, and sent to the fallback. Instance
+  # Mono.timeout(timeLimiterConfig.getTimeoutDuration()). The default is 1 SECOND,
   # names must match the circuitbreaker instance names.
   timelimiter:
     configs:
@@ -130,6 +157,12 @@ resilience4j:
         base-config: default
       orderServiceCB:
         base-config: default
+
+
+#No keycloak.admin block here. The gateway is a RESOURCE SERVER: it validates tokens and
+#never calls the Keycloak Admin API, so admin credentials would be an unused secret in
+#the one internet-facing service. They live in user-service.yml, which is the only
+#service that provisions users.
 
 #route configuration moved to GatewayConfig class
 #spring:

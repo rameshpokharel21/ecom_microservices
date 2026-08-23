@@ -140,7 +140,6 @@ services:
     restart: unless-stopped
 
 
-
   rabbitmq:
     container_name: rabbitmq
     image: rabbitmq:management
@@ -213,6 +212,12 @@ services:
         condition: service_healthy
     environment:
       SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
+      #In-network address for Keycloak's signing keys. cloud-gateway.yml defaults this
+      #to localhost:8443 so an IDE run works; inside the container localhost is the
+      #gateway itself. Only the KEY FETCH moves - the issuer-uri it validates the iss
+      #claim against stays localhost:8443, because that is what Keycloak stamps into
+      #tokens handed out on the host. See the note in cloud-gateway.yml.
+      KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/ecom-app/protocol/openid-connect/certs
     networks:
       - ecom-network
     healthcheck:
@@ -279,6 +284,11 @@ services:
         condition: service_healthy
       eureka-server:
         condition: service_healthy
+      #service_started is enough, not service_healthy: the admin token is fetched lazily
+      #on the first POST /api/users, never at startup, so user-service does not need
+      #Keycloak up to boot. (keycloak has no healthcheck to wait on anyway.)
+      keycloak:
+        condition: service_started
 
     environment:
       SPRING_MONGODB_URI: mongodb://${MONGO_USERNAME}:${MONGO_PASSWORD}@mongodb:27017/${USER_DB}?authSource=admin
@@ -288,6 +298,11 @@ services:
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
       SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
+      #In-network address: user-service.yml defaults to localhost:8443 for IDE runs, but
+      #inside this container localhost is user-service. Same trap as KEYCLOAK_JWK_SET_URI.
+      KEYCLOAK_SERVER_URL: http://keycloak:8080
+      KEYCLOAK_ADMIN_CLIENT_ID: ${KEYCLOAK_ADMIN_CLIENT_ID}
+      KEYCLOAK_ADMIN_CLIENT_SECRET: ${KEYCLOAK_ADMIN_CLIENT_SECRET}
     volumes:
       - ./logs/user-service:/app/logs
     networks:
@@ -401,20 +416,36 @@ services:
       - ecom-network
     restart: unless-stopped
 
-#  pgadmin:
-#    container_name: ecom_pgadmin
-#    image: dpage/pgadmin4
-#    environment:
-#      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
-#      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
-#      PGADMIN_CONFIG_SERVER_MODE: 'False'
-#    volumes:
-#      - pgadmin_data:/var/lib/pgadmin/data
-#    ports:
-#      - "5050:80"
-#    networks:
-#      - ecom-network
-#    restart: unless-stopped
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.6.2
+    command: start-dev
+    container_name: ecom_keycloak
+    environment:
+      #Hostname v2: ONE full URL, replacing KC_HOSTNAME: localhost + KC_HOSTNAME_PORT:
+      #8080 (a v1 pair that Keycloak 26 warns about, and that named the wrong port).
+      #This pins the issuer: Keycloak now stamps
+      #iss=http://localhost:8443/realms/ecom-app whether the token was fetched from the
+      #host or from inside ecom-network, which is exactly what the gateway's issuer-uri
+      #requires. It does not change the bind address - keycloak:8080 still serves
+      #in-network, which is what user-service and the gateway's jwk-set-uri use.
+      KC_HOSTNAME: http://localhost:8443
+      KC_HTTP_ENABLED: true
+      KC_HEALTH_ENABLED: true
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres/keycloak_db
+      KC_DB_USERNAME: ${POSTGRES_USER}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "8443:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ecom-network
+    restart: unless-stopped
+
 
 networks:
   ecom-network:
@@ -425,4 +456,3 @@ volumes:
   mongo_data:
   rabbitmq_data:
   kafka-data:
-  #pgadmin_data:

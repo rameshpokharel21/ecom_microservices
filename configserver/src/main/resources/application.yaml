@@ -37,5 +37,7 @@ logging:
     name: logs/${spring.application.name}.log
   logback:
     rollingpolicy:
+      file-name-pattern: ${LOG_FILE}.%d{yyyy-MM-dd}.%i.log
       max-file-size: 5MB
       max-history: 7
+      total-size-cap: 50MB

@@ -7,6 +7,7 @@ import lombok.Data;
 @Data
 public class UserResponse {
 
+    //The Keycloak user id / JWT "sub" - see User.id.
     private String id;
     private String firstName;
     private String lastName;

@@ -9,5 +9,22 @@ logging:
     org.springframework.data.mongodb.core: DEBUG
     org.springframework.boot.autoconfigure: DEBUG
 
-
-
+#Keycloak Admin API. user-service is the only service that PROVISIONS users: addUser
+#creates the Keycloak account, takes back its id as the Mongo _id, and assigns the realm
+#role. Bound by KeyCloakAdminProperties.
+#
+#client-id/client-secret are a SERVICE ACCOUNT in this realm (client_credentials), not
+#the master realm's admin user. The bootstrap admin controls the entire Keycloak
+#installation; this client holds only manage-users and view-realm, so a leak costs the
+#user directory rather than everything. It is a different client from oauth2-pkce, which
+#stays public and is only for browser/Postman login.
+#
+#server-url defaults to the HOST address so an IDE run works, and docker-compose
+#overrides it to http://keycloak:8080 - inside the container "localhost" is user-service
+#itself, the same trap as the gateway's jwk-set-uri and KAFKA_BROKERS.
+keycloak:
+  admin:
+    server-url: ${KEYCLOAK_SERVER_URL:http://localhost:8443}
+    realm: ecom-app
+    client-id: ${KEYCLOAK_ADMIN_CLIENT_ID:ecom-admin-cli}
+    client-secret: ${KEYCLOAK_ADMIN_CLIENT_SECRET}

@@ -142,11 +142,6 @@ public class GatewayConfig {
 //                        .uri("http://order-service:9090")
 //                )
 
-
-                //dashboard at /eureka (not /eureka/main) so the browser resolves
-                //Eureka's relative asset URLs (eureka/css/wro.css) to /eureka/css/...,
-                //which the passthrough route below serves. Declared first: /eureka/**
-                //also matches /eureka, and first match wins.
                 .route("EUREKA-SERVER", r -> r
                         .path("/eureka")
                         .filters(f -> f.rewritePath("/eureka", "/"))

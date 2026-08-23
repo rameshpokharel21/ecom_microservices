@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 
 @Document(collection = "user_table")
 public class User {
+    //Equals the Keycloak user id, i.e. the JWT "sub" the gateway relays as X-User-ID.
     @Id
     private String id;
     private String firstName;
@@ -22,6 +23,7 @@ public class User {
     private String email;
     private String phone;
 
+    //Provisioning intent, not an authorization input - the token is authoritative.
     private UserRole role = UserRole.CUSTOMER;
 
     private Address address;

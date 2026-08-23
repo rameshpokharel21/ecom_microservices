@@ -14,6 +14,8 @@ import org.mapstruct.Mapping;
 public interface UserMapper {
 
     //UserRequest to User
+    //id and role are never taken from the request: the id comes back from Keycloak,
+    //and ignoring role means self-signup always gets the CUSTOMER default, never ADMIN.
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "role", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
@@ -23,7 +25,7 @@ public interface UserMapper {
 
 
     //User to UserResponse
-    @Mapping(source = "id", target = "id", numberFormat = "#")
+    //no numberFormat on id: it is a Keycloak UUID string now, never a number.
     @Mapping(source = "address", target = "addressDto")
     UserResponse toResponse(User user);
 
