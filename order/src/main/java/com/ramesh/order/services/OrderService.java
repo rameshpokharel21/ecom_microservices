@@ -92,6 +92,15 @@ public class OrderService {
         return Optional.of(orderMapper.toResponse(savedOrder));
     }
 
+    //Reads the same X-User-ID the cart endpoints do, so a caller can only ever see its
+    //own orders - there is no order id in the signature to tamper with.
+    public List<OrderResponse> getUserOrders(String userId) {
+        return orderRepository.findByUserIdOrderByCreatedAtDesc(userId)
+                .stream()
+                .map(orderMapper::toResponse)
+                .toList();
+    }
+
     private List<OrderItemDto> mapToOrderItemDtos(List<OrderItem> items){
         return items.stream()
                 .map(item -> orderItemMapper.toOrderItemDto(item))

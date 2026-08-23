@@ -10,6 +10,16 @@ import org.springframework.web.client.RestClientException;
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    //CartService.addToCart parses productId with Long.valueOf because "a malformed id is
+    //a bad request, not a product-service failure". Without this handler that intent was
+    //not true over HTTP: the NumberFormatException fell through to Spring's default and
+    //came back as a 500, which tells a client to retry a request that can never succeed.
+    @ExceptionHandler(NumberFormatException.class)
+    public ResponseEntity<ErrorResponse> handleMalformedProductId(NumberFormatException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(new ErrorResponse("INVALID_PRODUCT_ID", "productId must be numeric"));
+    }
+
     @ExceptionHandler(ProductNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleProductNotFound(ProductNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
