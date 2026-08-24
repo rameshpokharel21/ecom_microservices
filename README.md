@@ -473,25 +473,63 @@ npm run dev          # http://localhost:5173
 The main stack must be up, and the Keycloak console steps above must be done, or
 the login round trip fails at the token exchange.
 
-### Configuration
+### Environment variables
 
-All addresses come from `frontend/.env`, read through `src/config.js`:
+Every address the front end knows comes from **`frontend/.env`**, read through
+`src/config.js`. This is a **second** `.env`, separate from the root one — the
+root file configures the containers, this one configures the browser app. Create
+it alongside `package.json`:
 
-| variable | default |
-|---|---|
-| `VITE_API_BASE_URL` | `http://localhost:8080` |
-| `VITE_KEYCLOAK_URL` | `http://localhost:8443` |
-| `VITE_KEYCLOAK_REALM` | `ecom-app` |
-| `VITE_KEYCLOAK_CLIENT_ID` | `oauth2-pkce` |
+```dotenv
+# ─── The gateway ───
+# Every /api/** call goes here. Never to a service directly - product-service and
+# the rest are not published to the host at all.
+VITE_API_BASE_URL=http://localhost:8080
 
-`.env` is committed on purpose — none of it is secret. Only `VITE_`-prefixed vars
-reach the browser bundle at all, which is what stops a stray secret leaking by
-accident. **These are substituted at build time, not read at runtime**, so editing
-`.env` needs a dev-server restart, not just a reload.
+# ─── Keycloak ───
+# The host must match cloud-gateway.yml's issuer-uri CHARACTER FOR CHARACTER: the
+# gateway compares the token's "iss" claim as a plain string, which is why
+# docker-compose pins KC_HOSTNAME to http://localhost:8443.
+VITE_KEYCLOAK_URL=http://localhost:8443
+VITE_KEYCLOAK_REALM=ecom-app
 
-`redirectUri` is not configurable: it is `window.location.origin`. It *must* equal
-the origin the browser is on or Keycloak rejects the redirect, and reading it from
-the browser makes disagreement impossible.
+# ─── The login client ───
+# The public PKCE client. NOT ecom-admin, which is confidential, server-to-server,
+# and holds a secret that must never reach a browser.
+VITE_KEYCLOAK_CLIENT_ID=oauth2-pkce
+```
+
+| variable | default if unset | what it points at |
+|---|---|---|
+| `VITE_API_BASE_URL` | `http://localhost:8080` | the gateway |
+| `VITE_KEYCLOAK_URL` | `http://localhost:8443` | Keycloak's base URL |
+| `VITE_KEYCLOAK_REALM` | `ecom-app` | realm name |
+| `VITE_KEYCLOAK_CLIENT_ID` | `oauth2-pkce` | the public PKCE client |
+
+**Every one of these has a fallback in `src/config.js`**, so a fresh clone with no
+`.env` at all still runs against a default local stack. The file exists to make the
+values explicit and overridable, not to make the app work.
+
+Four things worth knowing:
+
+- **It is gitignored.** The root `.gitignore` line `.env` matches at any depth, so
+  `frontend/.env` is ignored along with the root one — which is why it is written
+  out above rather than assumed present. Nothing in it is actually secret; it is
+  ignored by inheritance, not by intent.
+- **Only `VITE_`-prefixed variables reach the browser.** That is Vite refusing to
+  bundle anything else, and it is a real safety property: put a client secret in
+  this file without the prefix and it simply will not be exposed. Put one in *with*
+  the prefix and it ships to every visitor — so never do that. The front end is a
+  public client and holds no secret by design.
+- **Substitution happens at build time, not runtime.** `import.meta.env.X` is
+  replaced with a string literal when the bundle is built, so **editing `.env`
+  needs a dev-server restart** — a browser reload will not pick it up. Confirmed:
+  the built bundle contains the literal URLs and zero `import.meta.env` references.
+- **The redirect URI is deliberately not here.** It is `window.location.origin`,
+  read from the browser. It *must* equal the origin the page is actually served
+  from or Keycloak rejects the redirect, and taking it from the browser makes the
+  two impossible to disagree. If you change the port, change it in Keycloak's Valid
+  redirect URIs and Web origins, and in the gateway's CORS bean — not here.
 
 The port is pinned with `strictPort: true` in `vite.config.js`. Without it Vite
 slides to 5174 when 5173 is busy, and every CORS allow-list — the gateway's bean
