@@ -117,11 +117,28 @@ public class SecurityConfig {
                         //Matched on METHOD + path so GET /api/users (list every user)
                         //stays behind authentication.
                         .pathMatchers(HttpMethod.POST, "/api/users").permitAll()
-                        //Everything else - every proxied API route - needs a valid token.
-                        //Still authenticated() rather than hasRole("CUSTOMER"): a bug in
-                        //the converter below would otherwise 403 every route at once and
-                        //look like a broken gateway. Tighten once the log line in
-                        //grantedAuthoritiesExtractor shows the role actually arriving.
+                        //The /me trio, declared BEFORE /api/users/** below: the first
+                        //matching rule wins, so putting these after would make them
+                        //ADMIN-only and lock every customer out of their own profile.
+                        //These need no role - they carry no id, so the gateway's own
+                        //X-User-ID rewrite is the whole authorization.
+                        .pathMatchers("/api/users/me").authenticated()
+                        //Everything else under /api/users takes an id FROM THE CALLER.
+                        //Until now these were merely authenticated(), which meant any
+                        //logged-in customer could read, edit or delete any account, and
+                        //GET /api/users returned every profile in the system. Verified
+                        //before the change: user def64c9c fetched user c3e7c457's name,
+                        //phone and street address with a 200.
+                        .pathMatchers("/api/users", "/api/users/**").hasRole("ADMIN")
+                        //Writes to the catalogue are administrative; browsing is not.
+                        .pathMatchers(HttpMethod.POST, "/api/products/**").hasRole("ADMIN")
+                        .pathMatchers(HttpMethod.PUT, "/api/products/**").hasRole("ADMIN")
+                        .pathMatchers(HttpMethod.PATCH, "/api/products/**").hasRole("ADMIN")
+                        .pathMatchers(HttpMethod.DELETE, "/api/products/**").hasRole("ADMIN")
+                        //Everything else - reading the catalogue, carts, orders - needs a
+                        //valid token but no particular role. Deliberately NOT
+                        //hasRole("CUSTOMER"): that would 403 an ADMIN, who has the ADMIN
+                        //realm role and not necessarily CUSTOMER as well.
                         .anyExchange().authenticated()
                 )
                 //Bearer tokens only, validated as JWTs against the Keycloak keys named
@@ -192,11 +209,9 @@ public class SecurityConfig {
             List<String> roles = realmAccess == null
                     ? List.of()
                     : (List<String>) realmAccess.getOrDefault("roles", List.of());
-            //info while roles are being brought up - this is the evidence that the
-            //claim actually arrives. Expect Keycloak's defaults alongside CUSTOMER:
-            //default-roles-<realm>, offline_access, uma_authorization. Drop to debug
-            //once the rules below are tightened; it logs on every request.
-            logger.info("Extracted roles for sub {}: {}", jwt.getSubject(), roles);
+            //debug now that the rules above enforce roles: a 403 is the evidence, and
+            //this logged on every single request.
+            logger.debug("Extracted roles for sub {}: {}", jwt.getSubject(), roles);
             return Flux.fromIterable(roles)
                     .map(role -> new SimpleGrantedAuthority("ROLE_" + role));
         });

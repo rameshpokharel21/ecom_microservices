@@ -3,21 +3,25 @@ package com.ramesh.order.exceptions;
 import com.ramesh.order.dtos.ErrorResponse;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
-    //CartService.addToCart parses productId with Long.valueOf because "a malformed id is
-    //a bad request, not a product-service failure". Without this handler that intent was
-    //not true over HTTP: the NumberFormatException fell through to Spring's default and
-    //came back as a 500, which tells a client to retry a request that can never succeed.
-    @ExceptionHandler(NumberFormatException.class)
-    public ResponseEntity<ErrorResponse> handleMalformedProductId(NumberFormatException ex) {
+    //Replaces the old NumberFormatException handler. Now that productId is a Long from
+    //the DTO inward, a malformed id fails at the framework boundary instead of inside
+    //CartService: Jackson raises HttpMessageNotReadableException on the body, and path
+    //binding raises MethodArgumentTypeMismatchException on /carts/items/{productId}.
+    //Both already default to 400 - this only keeps the ErrorResponse shape the other
+    //handlers use, so a client never has to parse two different error formats.
+    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class})
+    public ResponseEntity<ErrorResponse> handleMalformedRequest(Exception ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(new ErrorResponse("INVALID_PRODUCT_ID", "productId must be numeric"));
+                .body(new ErrorResponse("INVALID_REQUEST", "A field or path variable has the wrong type"));
     }
 
     @ExceptionHandler(ProductNotFoundException.class)

@@ -44,11 +44,9 @@ public class  CartService {
 
     public void addToCart(String userId, CartItemRequest request) {
 
-        //parsed here rather than inside ProductLookup: a malformed id is a bad request,
-        //not a product-service failure, and must not count against the breaker
-        Long productId = Long.valueOf(request.getProductId());
-
-        ProductResponse productResponse = productLookup.getProduct(productId);
+        //No Long.valueOf here any more: productId is a Long from the DTO inward, so a
+        //malformed id is rejected by Jackson before this method runs.
+        ProductResponse productResponse = productLookup.getProduct(request.getProductId());
 
         if(productResponse == null){
             throw new ProductNotFoundException("Product with id " + request.getProductId() + " does not exist");
@@ -81,7 +79,7 @@ public class  CartService {
         }
     }
 
-    public boolean deleteItemFromCart(String userId, String productId) {
+    public boolean deleteItemFromCart(String userId, Long productId) {
 
        CartItem cartItem = cartItemRepository.findByUserIdAndProductId(userId, productId);
 

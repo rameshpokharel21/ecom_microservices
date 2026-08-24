@@ -23,9 +23,10 @@ public class User {
     private String email;
     private String phone;
 
-    //Provisioning intent, not an authorization input - the token is authoritative.
-    private UserRole role = UserRole.CUSTOMER;
-
+    //No role field. It was written once at signup and never again, so assigning a role in
+    //the Keycloak console left this saying CUSTOMER for an actual ADMIN. Keycloak is the
+    //system of record for roles and nothing syncs backward; the token's realm_access.roles
+    //is the only correct source, and it is what the gateway authorizes against.
     private Address address;
 
     @CreatedDate

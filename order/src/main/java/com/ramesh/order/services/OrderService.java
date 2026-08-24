@@ -111,7 +111,7 @@ public class OrderService {
         return cartItems.stream()
                 .map(item -> {
                     OrderItem orderItem = new OrderItem();
-                    orderItem.setProductId(Long.valueOf(item.getProductId()));
+                    orderItem.setProductId(item.getProductId());
                     orderItem.setQuantity(item.getQuantity());
                     orderItem.setUnitPrice(item.getUnitPrice());
                     orderItem.setOrder(order);
@@ -138,7 +138,7 @@ public class OrderService {
                 order.getItems().stream()
                         .map(item -> new OrderItemDto(
                                 item.getId(),
-                                item.getProductId().toString(),
+                                item.getProductId(),
                                 item.getQuantity(),
                                 item.getUnitPrice(),
                                 item.getUnitPrice().multiply(BigDecimal.valueOf(item.getQuantity()))

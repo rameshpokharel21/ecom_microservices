@@ -22,6 +22,42 @@ public class UserController {
         return ResponseEntity.ok(userList);
     }
 
+    /*
+     * The /me trio. These take NO id: the only input is the X-User-ID header, which the
+     * gateway strips from the request and rewrites from the token's "sub", so a caller
+     * cannot address another account even deliberately. That is the same structural
+     * authorization the cart and order endpoints have always had, and it is why the
+     * /{id} variants below are now ADMIN-only - they take an id from the client, so
+     * without a role check any logged-in user could read, edit or delete any account.
+     *
+     * No mapping conflict with /{id}: a literal path segment outranks a template in
+     * Spring's path matching, regardless of declaration order.
+     */
+    @GetMapping("/me")
+    public ResponseEntity<UserResponse> getCurrentUser(@RequestHeader("X-User-ID") String userId){
+        return userService.fetchUserById(userId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @PutMapping("/me")
+    public ResponseEntity<UserResponse> updateCurrentUser(@RequestBody UserRequest updatedUser,
+                                                          @RequestHeader("X-User-ID") String userId){
+        return userService.updateUser(updatedUser, userId)
+                .map(ResponseEntity::ok)
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @DeleteMapping("/me")
+    public ResponseEntity<Void> deleteCurrentUser(@RequestHeader("X-User-ID") String userId){
+        try{
+            userService.removeUser(userId);
+            return ResponseEntity.noContent().build();
+        }catch (NoSuchElementException e){
+            return ResponseEntity.notFound().build();
+        }
+    }
+
     @GetMapping("/{id}")
     public ResponseEntity<UserResponse> getUserById(@PathVariable("id") String id){
 

@@ -11,7 +11,9 @@ import java.math.BigDecimal;
 @AllArgsConstructor
 public class OrderItemDto {
     private Long id;
-    private String productId;
+    //Long to match order-service's DTO. Jackson would coerce the number into a String
+    //without complaint, which is exactly how the inconsistency survived this long.
+    private Long productId;
     private Integer quantity;
     private BigDecimal price;
     private BigDecimal subTotal;

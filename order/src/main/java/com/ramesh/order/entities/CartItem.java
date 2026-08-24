@@ -19,7 +19,7 @@ public class CartItem {
 
     private String userId;
 
-    private String productId;
+    private Long productId;
 
     private Integer quantity;
 

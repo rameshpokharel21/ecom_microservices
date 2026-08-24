@@ -14,10 +14,9 @@ import org.mapstruct.Mapping;
 public interface UserMapper {
 
     //UserRequest to User
-    //id and role are never taken from the request: the id comes back from Keycloak,
-    //and ignoring role means self-signup always gets the CUSTOMER default, never ADMIN.
+    //The id is never taken from the request - it comes back from Keycloak. There is no
+    //role to ignore any more: the entity no longer stores one.
     @Mapping(target = "id", ignore = true)
-    @Mapping(target = "role", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target="updatedAt", ignore = true)
     @Mapping(source="addressDto", target = "address")
