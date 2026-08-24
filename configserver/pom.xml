@@ -36,9 +36,12 @@
 			<artifactId>spring-cloud-config-server</artifactId>
 		</dependency>
 
+        <!--Bus over Kafka, not AMQP. Bus rides Spring Cloud Stream, so only the binder
+            changes: /actuator/busrefresh is unaffected. Removing the last AMQP user is
+            what let the rabbitmq container go entirely.-->
         <dependency>
             <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-bus-amqp</artifactId>
+            <artifactId>spring-cloud-starter-bus-kafka</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

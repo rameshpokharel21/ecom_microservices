@@ -37,15 +37,19 @@
             <artifactId>spring-cloud-starter-config</artifactId>
         </dependency>
 
-<!--        <dependency>-->
-<!--            <groupId>org.springframework.boot</groupId>-->
-<!--            <artifactId>spring-boot-starter-amqp</artifactId>-->
-<!--        </dependency>-->
+        <!--Bus, joined at last. OrderConfigDemoController is @RefreshScope but this
+            service was not on the bus, so /actuator/busrefresh never reached it - the
+            note in order-service.yml claiming otherwise was simply wrong. The AMQP
+            variants that used to sit here are gone with rabbitmq.
 
-<!--        <dependency>-->
-<!--            <groupId>org.springframework.cloud</groupId>-->
-<!--            <artifactId>spring-cloud-starter-bus-amqp</artifactId>-->
-<!--        </dependency>-->
+            No extra binder: spring-cloud-stream-binder-kafka is already below, and Bus
+            binds springCloudBusInput/Output onto that same binder. Because publishing
+            goes through StreamBridge rather than a declared function, there is no
+            spring.cloud.function.definition here for busConsumer to collide with.-->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-bus-kafka</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.cloud</groupId>
             <artifactId>spring-cloud-stream</artifactId>

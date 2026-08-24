@@ -38,9 +38,11 @@
             <artifactId>spring-cloud-starter-config</artifactId>
         </dependency>
 
+        <!--Bus over Kafka. Brings spring-cloud-stream + the Kafka binder with it, which
+            is why the broker address now has to be resolvable from this service too.-->
         <dependency>
             <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-bus-amqp</artifactId>
+            <artifactId>spring-cloud-starter-bus-kafka</artifactId>
         </dependency>
 
         <dependency>

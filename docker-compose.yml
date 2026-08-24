@@ -140,25 +140,9 @@ services:
     restart: unless-stopped
 
 
-  rabbitmq:
-    container_name: rabbitmq
-    image: rabbitmq:management
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
-    ports:
-      - "${RABBITMQ_PORT}:5672" #AMQP
-      - "${RABBITMQ_MGMT_PORT}:15672" #Management UI
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-    networks:
-      - ecom-network
-    healthcheck:
-      test: [ "CMD", "rabbitmq-diagnostics", "ping" ]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    restart: unless-stopped
+  #RabbitMQ is gone. §21-§23 moved the order event to Kafka and left Rabbit carrying only
+  #Spring Cloud Bus; the Bus now rides the Kafka binder too, so nothing was left to run.
+  #The RABBITMQ_* variables in .env are dead with it.
 
   #config server
   config-server:
@@ -170,14 +154,14 @@ services:
     volumes:
       - ./configserver/src/main/resources/config:/app/config:ro
       - ./logs/config-server:/app/logs
+    #Kafka, not rabbitmq, and this moves Kafka to the ROOT of the startup graph: nothing
+    #starts before config-server, so a broken broker now blocks everything rather than
+    #just order and notification. That is the cost of one broker instead of two.
     depends_on:
-      rabbitmq:
+      kafka:
         condition: service_healthy
     environment:
-      SPRING_RABBITMQ_HOST: rabbitmq
-      SPRING_RABBITMQ_PORT: 5672
-      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
-      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
+      KAFKA_BROKERS: kafka:9092
     networks:
       - ecom-network
     healthcheck:
@@ -246,7 +230,7 @@ services:
         condition: service_healthy
       config-server:
         condition: service_healthy
-      rabbitmq:
+      kafka:
         condition: service_healthy
       eureka-server:
         condition: service_healthy
@@ -255,10 +239,9 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${PRODUCT_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
-      SPRING_RABBITMQ_HOST: rabbitmq
-      SPRING_RABBITMQ_PORT: 5672
-      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
-      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
+      #Kafka is here for the BUS, not for events - product-service publishes nothing.
+      #Without it /actuator/busrefresh cannot reach this service's @RefreshScope bean.
+      KAFKA_BROKERS: kafka:9092
       SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
 
     volumes:
@@ -280,7 +263,7 @@ services:
         condition: service_healthy
       config-server:
         condition: service_healthy
-      rabbitmq:
+      kafka:
         condition: service_healthy
       eureka-server:
         condition: service_healthy
@@ -293,10 +276,8 @@ services:
     environment:
       SPRING_MONGODB_URI: mongodb://${MONGO_USERNAME}:${MONGO_PASSWORD}@mongodb:27017/${USER_DB}?authSource=admin
       TEST_VAR: hello_from_docker
-      SPRING_RABBITMQ_HOST: rabbitmq
-      SPRING_RABBITMQ_PORT: 5672
-      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
-      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
+      #For the BUS only - user-service publishes no events.
+      KAFKA_BROKERS: kafka:9092
       SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
       #In-network address: user-service.yml defaults to localhost:8443 for IDE runs, but
       #inside this container localhost is user-service. Same trap as KEYCLOAK_JWK_SET_URI.
@@ -324,8 +305,6 @@ services:
         condition: service_healthy
       config-server:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
       eureka-server:
         condition: service_healthy
       kafka:
@@ -335,10 +314,6 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${ORDER_DB}
       SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
-      SPRING_RABBITMQ_HOST: rabbitmq
-      SPRING_RABBITMQ_PORT: 5672
-      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
-      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
       # Overrides the localhost:29092 default in config/order-service.yml. Inside a
       # container localhost is the container itself; kafka:9092 is the PLAINTEXT
       # listener advertised on this network.
@@ -361,17 +336,11 @@ services:
     depends_on:
       config-server:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
       eureka-server:
         condition: service_healthy
       kafka:
         condition: service_healthy
     environment:
-      SPRING_RABBITMQ_HOST: rabbitmq
-      SPRING_RABBITMQ_PORT: 5672
-      SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER}
-      SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASS}
       # Overrides the localhost:29092 default in config/notification-service.yml.
       KAFKA_BROKERS: kafka:9092
       SPRING_CLOUD_CONFIG_URI: ${SPRING_CLOUD_CONFIG_URI}
@@ -454,5 +423,4 @@ networks:
 volumes:
   postgres_data:
   mongo_data:
-  rabbitmq_data:
   kafka-data:

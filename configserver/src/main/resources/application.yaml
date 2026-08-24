@@ -12,17 +12,33 @@ spring:
         native:
           search-locations: file:/app/config
 
-  rabbitmq:
-    host: rabbitmq
-    port: 5672
-    username: ${RABBITMQ_USER}
-    password: ${RABBITMQ_PASS}
+    #Spring Cloud Bus, over Kafka. Bus is built on Spring Cloud Stream, so it reads the
+    #ordinary binder property - there is no bus-specific broker setting. This must live in
+    #config-server's OWN application.yaml, not in config/application.yml, because the
+    #config server cannot fetch configuration from itself.
+    #
+    #localhost:29092 is the host-side advertised listener for IDE runs; docker-compose.yml
+    #overrides it with KAFKA_BROKERS=kafka:9092. Inside a container localhost is the
+    #container itself - the same trap as the gateway's jwk-set-uri.
+    #
+    #The bus topic is "springCloudBus" (BusConstants.DESTINATION) and the binder creates
+    #it on first use. No credentials any more: Kafka here is PLAINTEXT, so the
+    #RABBITMQ_USER / RABBITMQ_PASS pair that used to be here has no equivalent.
+    stream:
+      kafka:
+        binder:
+          brokers: ${KAFKA_BROKERS:localhost:29092}
 eureka:
   client:
     serviceUrl:
       defaultZone: http://eureka-server:8761/eureka
     register-with-eureka: true
     fetch-registry: true
+    #See the long note in config/application.yml. Repeated here because config-server
+    #cannot fetch configuration from itself - and it is the service that showed the
+    #symptom loudest, going UNHEALTHY after its own /actuator/busrefresh.
+    refresh:
+      enable: false
 management:
   #actuator on its own port, deliberately not published in docker-compose.yml
   server:

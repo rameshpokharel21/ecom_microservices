@@ -4,7 +4,7 @@ management:
   #127.0.0.1 in docker-compose.yml, so they are still unreachable from the LAN.
   #Everything else stays reachable inside ecom-network only. Keep the loopback
   #prefix if you publish more: exposure is "*" below, which includes
-  #/actuator/heapdump - the entire JVM heap, DB and RabbitMQ credentials included.
+  #/actuator/heapdump - the entire JVM heap, database credentials included.
   server:
     port: 9090
   endpoints:
@@ -32,12 +32,49 @@ management:
       probability: 1.0
 
 
+#Kafka broker address for EVERY service that has a Spring Cloud Stream binder - which
+#since the Bus moved off AMQP means product, user and order as well as notification.
+#Declared once here rather than repeated per service; order-service.yml and
+#notification-service.yml still set it themselves, and a service-specific file wins over
+#this one, so those two are unaffected.
+#
+#Harmless for cloud-gateway and eureka-server: they receive the property and have no
+#binder to consume it.
+#
+#localhost:29092 is the host-side advertised listener for IDE runs; docker-compose.yml
+#overrides it with KAFKA_BROKERS=kafka:9092 inside the network.
+spring:
+  cloud:
+    stream:
+      kafka:
+        binder:
+          brokers: ${KAFKA_BROKERS:localhost:29092}
+
 eureka:
   client:
     serviceUrl:
       defaultZone: http://eureka-server:8761/eureka
     register-with-eureka: true
     fetch-registry: true
+    #Takes the Eureka client OUT of refresh scope. By default it is refresh-scoped
+    #(EurekaClientAutoConfiguration$ConditionalOnRefreshScope -> eureka.client.refresh
+    #.enable, matchIfMissing true), so every /actuator/refresh or /actuator/busrefresh
+    #tears the client down and rebuilds it - and on this Spring Cloud version that rebuild
+    #throws:
+    #  BeanCreationException: Error creating bean 'scopedTarget.eurekaClient'
+    #  ... NullPointerException: Cannot invoke "Object.hashCode()" because "<parameter1>"
+    #        is null
+    #The endpoint answers 500, the DiscoveryClient health indicator starts failing, and
+    #config-server goes UNHEALTHY in compose - measured on all four bus members at once.
+    #
+    #Nothing to do with the broker: this predates the AMQP-to-Kafka move and would have
+    #behaved identically on Rabbit. It only became visible now because order-service
+    #joined the bus and busrefresh was finally exercised end to end.
+    #
+    #The trade is that eureka.* changes need a restart rather than a refresh. Nobody
+    #re-points discovery at runtime, and the alternative is a broken client every time.
+    refresh:
+      enable: false
 
 logging:
   file:
