@@ -8,8 +8,27 @@ datasources:
   - name: Loki
     type: loki
     access: proxy
+    #Explicit uid so the Zipkin datasource below can name it as a trace-to-logs target.
+    #Without one Grafana generates a random uid per install and the link silently breaks.
+    uid: loki
     url: http://gateway:3100
     jsonData:
       httpHeaderName1: "X-Scope-OrgId"
     secureJsonData:
       httpHeaderValue1: "tenant1"
+  #NOT a new Zipkin container. The one in the root docker-compose.yml already collects
+  #every trace; this only points Grafana at it. That works because grafana joined
+  #ecom-network, the same trick prometheus already uses to scrape the services.
+  - name: Zipkin
+    type: zipkin
+    access: proxy
+    url: http://zipkin:9411
+    jsonData:
+      #The actual reason to view traces here rather than at localhost:9411: a span links
+      #straight to the Loki logs carrying the same trace id. Spring Boot puts that id in
+      #every log line - the [<traceId>-<spanId>] field in the pattern.
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: '-5m'
+        spanEndTimeShift: '5m'
+        filterByTraceID: true
