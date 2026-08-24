@@ -37,8 +37,7 @@ aggregation.
 | Spring Cloud | 2025.1.2 |
 | Databases | PostgreSQL 16 (product, order, keycloak), MongoDB 8 (user) |
 | Identity | Keycloak 26.6.2 — OIDC provider, realm `ecom-app` |
-| Messaging | **Kafka** (KRaft, no ZooKeeper) — order → notification, via Spring Cloud Stream |
-| | **RabbitMQ** — Spring Cloud Bus (`/actuator/busrefresh`) only |
+| Messaging | **Kafka** (KRaft, no ZooKeeper) — the only broker. Carries both the domain event (order → notification) and Spring Cloud Bus |
 | Cache / rate-limit store | Redis 8 (gateway token buckets) |
 | Resilience | Resilience4j circuit breakers, Redis-backed rate limiting |
 | Discovery | Netflix Eureka |
@@ -48,10 +47,12 @@ aggregation.
 | Metrics | Micrometer + Prometheus |
 | Logs | Grafana Alloy → Loki → Grafana |
 
-Both brokers are running, on purpose. **Kafka** carries the domain event
-(`OrderCreatedEvent`, order-service → notification-service). **RabbitMQ** is left
-in place for Spring Cloud Bus config refresh — see `details.md` §23 for the
-RabbitMQ → Kafka migration and what did *not* port.
+**One broker.** Kafka carries two unrelated flows on two topics: the domain event
+`OrderCreatedEvent` on `order.exchange` (order-service → notification-service,
+consumer group `notification`), and Spring Cloud Bus on `springCloudBus`
+(config refresh, every service, anonymous consumer groups). See `details.md` §23
+for the RabbitMQ → Kafka migration of the domain event and what did *not* port,
+and §28 for the Bus move that retired RabbitMQ entirely.
 
 ---
 
@@ -92,7 +93,7 @@ PostgreSQL       MongoDB│       PostgreSQL
                              notification-service :8084
                                                   (internal only)
 
-  Supporting: config-server :8888 · eureka-server :8761 · rabbitmq (Cloud Bus)
+  Supporting: config-server :8888 · eureka-server :8761 · kafka (also Cloud Bus)
               redis-server (gateway rate-limit buckets) · zipkin :9411
 ```
 
@@ -139,11 +140,8 @@ MONGO_USERNAME=user
 MONGO_PASSWORD=password
 MONGO_PORT=27018
 
-# ─── RabbitMQ (Spring Cloud Bus) ───
-RABBITMQ_USER=admin
-RABBITMQ_PASS=admin1234
-RABBITMQ_PORT=5672
-RABBITMQ_MGMT_PORT=15672
+# (No RABBITMQ_* any more — the broker is gone. Spring Cloud Bus runs on Kafka,
+#  which needs no credentials here: the listeners are PLAINTEXT.)
 
 # ─── Databases ───
 PRODUCT_DB=product_db
@@ -182,10 +180,10 @@ PGADMIN_DEFAULT_PASSWORD=admin
 - **Kafka needs no variables.** Its listeners, KRaft settings and cluster id are
   fixed in `docker-compose.yml`; only the *client* side is variable, and that is
   set per service as `KAFKA_BROKERS`.
-- `MONGO_PORT`, `RABBITMQ_PORT`, `RABBITMQ_MGMT_PORT`, `CONFIG_PORT`,
-  `EUREKA_SERVER_PORT` and `GATEWAY_PORT` are **host-side** ports only. Change
-  them freely to avoid local conflicts — traffic between containers always uses
-  the fixed internal ports (27017, 5672, 8888, 8761, 8080).
+- `MONGO_PORT`, `CONFIG_PORT`, `EUREKA_SERVER_PORT` and `GATEWAY_PORT` are
+  **host-side** ports only. Change them freely to avoid local conflicts — traffic
+  between containers always uses the fixed internal ports (27017, 8888, 8761,
+  8080).
 - `SPRING_CLOUD_CONFIG_URI` uses the Docker **service name**, not `localhost`.
   Inside a container, `localhost` means that container itself. The same trap is
   why `KEYCLOAK_SERVER_URL`, `KEYCLOAK_JWK_SET_URI` and `KAFKA_BROKERS` are set
@@ -312,11 +310,17 @@ docker compose up -d --build --wait
 Startup order is enforced by health-gated `depends_on`:
 
 ```
-postgres ─┬─ keycloak
-          └─ rabbitmq → config-server → eureka-server → { product, user, order, notification }
-kafka ────────────────────────────────────────────────► { order, notification }
-                                                      → cloud-gateway (also waits on redis-server)
+postgres ─── keycloak
+kafka ─────► config-server → eureka-server → { product, user, order, notification }
+                                           → cloud-gateway (also waits on redis-server)
 ```
+
+**Kafka is now a root dependency.** It used to sit off to the side, needed only by
+order and notification; since Spring Cloud Bus moved onto it, config-server waits
+on it too — and nothing starts before config-server. A broken broker now blocks
+the whole stack instead of two services. That is the price of running one broker
+rather than two, and it is worth knowing before debugging a stack that will not
+start.
 
 user-service depends on Keycloak with plain `service_started`, not
 `service_healthy` — the admin token is fetched on the first signup, never at
@@ -356,8 +360,7 @@ docker compose down -v       # …and delete volumes (DESTROYS all data,
 | Eureka dashboard | http://localhost:8761 | also proxied at http://localhost:8080/eureka |
 | Config server | http://localhost:8888 | e.g. `/product-service/default` |
 | Zipkin | http://localhost:9411 | distributed traces |
-| RabbitMQ management | http://localhost:15672 | login = `RABBITMQ_USER` / `RABBITMQ_PASS` |
-| Kafka | `localhost:29092` | host-side listener; `kafka:9092` in-network |
+| Kafka | `localhost:29092` | host-side listener; `kafka:9092` in-network. Topics: `order.exchange`, `springCloudBus` |
 | Grafana | http://localhost:3000 | observability stack only |
 | Prometheus | http://localhost:9090 | observability stack only |
 | PostgreSQL | `localhost:5433` | |
@@ -644,26 +647,74 @@ code runs.
 Two `@RefreshScope` demo endpoints exist for showing Spring Cloud Config
 live-refresh:
 
-| Endpoint | Service |
-|---|---|
-| `GET /api/product/demo/message` | product-service |
-| `GET /api/order/demo/message` | order-service |
+| Endpoint | Service | prefix |
+|---|---|---|
+| `GET /api/product/demo/message` | product-service | **singular** |
+| `GET /api/orders/demo/message` | order-service | **plural** |
 
-They are **not reachable through the gateway**, and since the business services
-are no longer published to the host, they are not reachable from your machine
-at all. The controllers map to *singular* prefixes (`/api/product/demo`,
-`/api/order/demo`) while the gateway routes match only the *plural* ones
-(`/api/products/**`, `/api/orders/**`).
+Note the two differ — `ProductConfigDemoController` is `/api/product/demo` while
+`OrderConfigDemoController` is `/api/orders/demo`. Neither is reachable through
+the gateway (the product one because the gateway routes only `/api/products/**`;
+the order one because the gateway route requires a token and these are demo
+endpoints), and since the business services are not published to the host, they
+are not reachable from your machine at all.
 
 Reach them from inside the network:
 
 ```bash
-docker exec ecom_gateway curl -s http://product-service:8081/api/product/demo/message
+docker run --rm --network ecom-network curlimages/curl -s \
+  http://product-service:8081/api/product/demo/message
+docker run --rm --network ecom-network curlimages/curl -s \
+  http://order-service:8083/api/orders/demo/message
 ```
 
-To route them properly, either add the singular paths to
-`gateway/src/main/java/com/ramesh/gateway/config/GatewayConfig.java`, or
-renumber the controllers onto the plural prefixes.
+### Config refresh without restarting
+
+Change a value in `configserver/src/main/resources/config/*.yml` — the directory
+is bind-mounted, so config-server serves the edit immediately — then broadcast:
+
+```bash
+docker run --rm --network ecom-network curlimages/curl -s -X POST \
+  http://product-service:9090/actuator/busrefresh          # 204 No Content
+```
+
+**Post it to any one service and every service applies it.** That is the whole
+point of the bus: the endpoint publishes a `RefreshRemoteApplicationEvent` to the
+`springCloudBus` Kafka topic, and every service is subscribed. Measured — the
+command above was sent to product-service alone, and order-service picked up its
+new value.
+
+What happens on each receiving service, in order:
+
+1. `RefreshListener` receives the event and calls `ContextRefresher.refresh()`.
+2. The `Environment` is rebuilt, which **re-fetches config from config-server over
+   HTTP** — you can see it in config-server's log as
+   `Adding property source: Config resource 'file [/app/config/product-service.yml]'`.
+3. Old and new property sources are diffed; an `EnvironmentChangeEvent` carries
+   the changed keys, and `@ConfigurationProperties` beans are re-bound.
+4. `RefreshScope.refreshAll()` **discards the cached instance** of every
+   `@RefreshScope` bean. They are rebuilt lazily on next access, against the new
+   `Environment` — which is when a `@Value` is re-resolved.
+
+**The ApplicationContext is never closed.** The servlet container, connection
+pools, JPA `EntityManagerFactory` and Kafka bindings all keep running untouched.
+That is why it is not a restart.
+
+**What does *not* refresh**, and this is the part that surprises people:
+
+| refreshes | does not |
+|---|---|
+| `@Value` inside a `@RefreshScope` bean | `@Value` in a plain singleton — injected once at construction |
+| `@ConfigurationProperties` beans (re-bound) | `server.port`, datasource URL — read once at startup |
+| Resilience4j / rate-limit values read per call | Logback rolling policy — the appender is built at startup |
+| | `spring.cloud.stream` bindings |
+
+A plain `@Value` in a singleton silently keeps the old value. Nothing errors; the
+refresh reports success and that one field is simply stale.
+
+`details.md` §28 covers the mechanism in full, including the side effects — the
+Eureka client bug this surfaced, the accumulating anonymous consumer groups, and
+why a broadcast with no acknowledgement can apply to some services and not others.
 
 ---
 
@@ -1019,9 +1070,12 @@ docker exec ecom_gateway curl -s http://keycloak:9000/health/ready  # the keyclo
 docker logs ecom_keycloak --tail 50
 docker exec -it ecom_postgres psql -U user -d keycloak_db -c '\dt'
 
-# ── RabbitMQ (Spring Cloud Bus only) ──────────────────────
-docker exec rabbitmq rabbitmqctl list_queues name durable messages consumers
-docker exec rabbitmq rabbitmqctl list_exchanges name type
+# ── Spring Cloud Bus (a Kafka topic now, not a Rabbit exchange) ──
+docker exec ecom_kafka kafka-topics --bootstrap-server localhost:9092 \
+  --describe --topic springCloudBus
+# One anonymous consumer group PER SERVICE PER RESTART - that is the fanout, and
+# also why this list grows. See details.md §28.4.
+docker exec ecom_kafka kafka-consumer-groups --bootstrap-server localhost:9092 --list
 
 # ── Redis (gateway rate-limit buckets) ────────────────────
 docker exec ecom_redis redis-cli keys "request_rate_limiter*"
@@ -1046,7 +1100,6 @@ that is the `PLAINTEXT_HOST` listener, and it is what the healthcheck uses too.
 | `redis-server` | `ecom_redis` |
 | `kafka` | `ecom_kafka` |
 | `keycloak` | `ecom_keycloak` |
-| `rabbitmq` | `rabbitmq` |
 
 Use the **compose service name** with `docker compose …`, and the **container
 name** with plain `docker …`.
@@ -1238,7 +1291,9 @@ Spring Cloud Stream → Kafka), and §24 the whole Keycloak story — including 
 id-resolution bug in §24.3 that is the most transferable thing in it.
 §26 covers the React front end and §27 the authorization work — roles enforced,
 `/me`, one type for `productId`, and the admin UI — written plainer than the rest
-and probably the best place to start.
+and probably the best place to start. §28 retires RabbitMQ by moving Spring Cloud
+Bus onto Kafka, and explains what a config refresh actually does to a running
+JVM — including the side effects.
 §25 is the one section that is not a change log entry: it explains the two
 outbound-HTTP client shapes in the codebase — the discovery-aware
 `@HttpExchange` clients in order-service versus the single-purpose Keycloak
