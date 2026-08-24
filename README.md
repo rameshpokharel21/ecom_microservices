@@ -18,6 +18,7 @@ aggregation.
 - [Running](#running)
 - [Service URLs](#service-urls)
 - [Authentication](#authentication)
+- [Front end](#front-end)
 - [API endpoints](#api-endpoints)
 - [Testing the endpoints](#testing-the-endpoints)
 - [Observability](#observability)
@@ -219,8 +220,28 @@ admin, which is a different thing from the client below).
 | Client authentication | **Off** (public) |
 | Standard flow | **On** |
 | PKCE method | **S256** (Advanced tab) |
-| Valid redirect URIs | `https://oauth.pstmn.io/v1/callback`, and later `http://localhost:5173/*` |
-| Web origins | `http://localhost:5173` (needed only for a browser front end) |
+| Valid redirect URIs | `https://oauth.pstmn.io/v1/callback` **and** `http://localhost:5173/*` |
+| Web origins | `http://localhost:5173` — **no wildcard, no trailing slash** |
+| Valid post logout redirect URIs | `http://localhost:5173` |
+| Direct access grants | On only while you need `grant_type=password` for curl/Postman — turn it **off** once the browser flow works |
+
+**Redirect URIs and Web origins are different fields answering different
+questions**, and the second one is the one that bites:
+
+| field | checked by | question |
+|---|---|---|
+| Valid redirect URIs | the **authorization** endpoint | may I send the user back here with a code? |
+| **Web origins** | the **token** endpoint | may a browser at this origin read my response? |
+
+Web origins exists only to put `Access-Control-Allow-Origin` on the token
+response, so Postman never needed it — Postman is a desktop app and has no
+origin. Miss it and every *visible* step works: the login page appears, the
+password is accepted, the browser lands back on `:5173/?code=…`, and then the
+silent background token exchange is blocked by the browser. Nothing appears in the
+Keycloak log or the gateway log, because the request never reached either.
+
+Note the format difference: the redirect URI needs the wildcard, Web origins must
+**not** have one — that field is compared against the `Origin` header verbatim.
 
 **3. Client `ecom-admin`** — the provisioning client, confidential.
 
@@ -248,6 +269,31 @@ Promotion to `ADMIN` is a console action — Users → *user* → Role mapping. 
 always yields `CUSTOMER` and cannot request anything else; `UserRequest` has no
 `role` field. `details.md` §24.11 covers the other four ways roles can be
 assigned, including groups and default roles.
+
+**5. Make an admin.** There is no API for this and there deliberately never will
+be — self-service promotion is privilege escalation, so the first `ADMIN` has to
+be console-made, the same circularity that forces signup to be `permitAll()`.
+
+1. **Sign up through the app first** (`/signup`, or `POST /api/users`). Do **not**
+   use the console's *Add user*: that creates a Keycloak account with no Mongo
+   profile, so the account logs in fine but `GET /api/users/me` and every cart
+   call return 404. Signup is what writes both halves.
+2. Console → realm **`ecom-app`** (top-left dropdown — every screen is silently
+   the wrong realm if you skip this) → Users → *that user* → **Role mapping** →
+   *Assign role*.
+3. **Switch the filter to "Filter by realm roles".** The dialog defaults to
+   *filter by clients*, and `ADMIN` is a realm role, so it does not appear until
+   you change it. This is where people conclude the role does not exist.
+4. **Log out fully and log in again.** Roles are baked into the token when it is
+   issued, so an existing token never gains one. Clearing local state is not
+   enough — Keycloak's SSO cookie survives and hands back the same session.
+
+Verify with `GET /api/users`: `200` for an admin, `403` for a customer.
+
+> Assigning a role in the console changes Keycloak and nothing else. That is
+> correct — Keycloak is the system of record for roles, and user-service stores no
+> copy of them (it used to, and the copy went stale the moment anyone used this
+> screen). The token's `realm_access.roles` is the only answer.
 
 ---
 
@@ -304,6 +350,7 @@ docker compose down -v       # …and delete volumes (DESTROYS all data,
 
 | Service | URL | Notes |
 |---|---|---|
+| **Front end** | http://localhost:5173 | React + Vite dev server — **not** a compose service, see [Front end](#front-end) |
 | **API gateway** | http://localhost:8080 | all `/api/**` traffic |
 | **Keycloak** | http://localhost:8443 | admin console; `admin` / `admin` |
 | Eureka dashboard | http://localhost:8761 | also proxied at http://localhost:8080/eureka |
@@ -344,7 +391,35 @@ Every `/api/**` route needs a bearer token, with exactly three exceptions:
 | `/eureka`, `/eureka/**` | a browser cannot attach a bearer token to an address-bar navigation |
 
 Note the signup rule is matched on **method + path**: `GET /api/users` (list every
-user) still requires a token.
+user) still requires a token — and now a role.
+
+### Roles
+
+Roles come from the token's `realm_access.roles`. The gateway prepends `ROLE_`, so
+the Keycloak realm role must be named `ADMIN`, never `ROLE_ADMIN`.
+
+| routes | required |
+|---|---|
+| `GET /api/users/me`, `PUT`/`DELETE /api/users/me` | any valid token |
+| `GET /api/users`, `GET`/`PUT`/`DELETE /api/users/{id}` | **`ADMIN`** |
+| `POST`/`PUT`/`PATCH`/`DELETE /api/products/**` | **`ADMIN`** |
+| everything else — catalogue reads, carts, orders | any valid token |
+
+Order matters in `SecurityConfig`: the first matching rule wins, so
+`/api/users/me` is declared **before** `/api/users/**`. Reversed, every customer
+would be locked out of their own profile.
+
+The `/me` routes exist because `/api/users/{id}` takes an id **from the caller**.
+Until roles were enforced, any logged-in customer could read, edit or delete any
+account — measured, not hypothetical: one user fetched another's name, phone and
+street address with a `200`. The `/me` routes take no id at all; the only input is
+the `X-User-ID` the gateway rewrites from the token, so authorization is
+structural rather than a check that can be forgotten. That is the same shape the
+cart and order endpoints have always had.
+
+Not enforced anywhere: `CUSTOMER`. The catch-all is `authenticated()` rather than
+`hasRole("CUSTOMER")` on purpose — an admin holds `ADMIN` and not necessarily
+`CUSTOMER`, so the stricter rule would 403 admins out of shopping.
 
 ### Getting a token
 
@@ -382,6 +457,71 @@ directly. `details.md` §24.3 explains why the alternative (a separate
 
 ---
 
+## Front end
+
+React 19 + Vite, `react-oauth2-code-pkce`, Tailwind v4, react-router. It lives in
+`frontend/` and runs on the Vite dev server only — **deliberately not a compose
+service**. The origin is the thing that matters, and `npm run dev` already serves
+it on the origin the gateway and Keycloak both trust.
+
+```bash
+cd frontend
+npm install
+npm run dev          # http://localhost:5173
+```
+
+The main stack must be up, and the Keycloak console steps above must be done, or
+the login round trip fails at the token exchange.
+
+### Configuration
+
+All addresses come from `frontend/.env`, read through `src/config.js`:
+
+| variable | default |
+|---|---|
+| `VITE_API_BASE_URL` | `http://localhost:8080` |
+| `VITE_KEYCLOAK_URL` | `http://localhost:8443` |
+| `VITE_KEYCLOAK_REALM` | `ecom-app` |
+| `VITE_KEYCLOAK_CLIENT_ID` | `oauth2-pkce` |
+
+`.env` is committed on purpose — none of it is secret. Only `VITE_`-prefixed vars
+reach the browser bundle at all, which is what stops a stray secret leaking by
+accident. **These are substituted at build time, not read at runtime**, so editing
+`.env` needs a dev-server restart, not just a reload.
+
+`redirectUri` is not configurable: it is `window.location.origin`. It *must* equal
+the origin the browser is on or Keycloak rejects the redirect, and reading it from
+the browser makes disagreement impossible.
+
+The port is pinned with `strictPort: true` in `vite.config.js`. Without it Vite
+slides to 5174 when 5173 is busy, and every CORS allow-list — the gateway's bean
+and Keycloak's Web origins — silently stops matching.
+
+### Pages
+
+| route | needs |
+|---|---|
+| `/` catalogue, `/signup` | nothing |
+| `/products/:id`, `/cart`, `/orders`, `/profile` | a token |
+| `/admin/products` — create / edit / delete | **`ADMIN`** |
+| `/admin/users` — list / delete | **`ADMIN`** |
+
+Admin links appear in the nav only for an `ADMIN` token, and `AdminRoute` guards
+the routes.
+
+> **The front-end role check is not security.** It decides what a user *sees*.
+> What a user may *do* is decided by the gateway, against a signed token, on every
+> request. Anyone can edit `tokenData` in devtools and reveal every admin screen —
+> and every call those screens make still comes back `403`.
+
+Two things the admin screens deliberately do not do. The Users table shows no
+roles, because it cannot: `GET /api/users` returns profiles, and roles live only
+in Keycloak. And you cannot delete your own account from it — that would leave a
+live token whose `/me` is gone, and if you are the only admin, nobody can reach
+the screen again.
+
+---
+
 ## API endpoints
 
 All paths are relative to the gateway, **http://localhost:8080**. All require
@@ -394,24 +534,47 @@ All paths are relative to the gateway, **http://localhost:8080**. All require
 | GET | `/api/products` | All active products |
 | GET | `/api/products/{id}` | Get product by ID |
 | GET | `/api/products/search?keyword=` | Search by name (in-stock, active only) |
-| POST | `/api/products` | Create a product |
-| PUT | `/api/products/{id}` | Update product by ID |
-| DELETE | `/api/products/{id}` | **Soft delete** — sets `active=false`, row remains |
+| POST | `/api/products` | **`ADMIN`** — create a product |
+| PUT | `/api/products/{id}` | **`ADMIN`** — update product by ID |
+| DELETE | `/api/products/{id}` | **`ADMIN`** — **soft delete**, sets `active=false`, row remains |
 
 ### User service
 
 | Method | Endpoint | Description |
 |---|---|---|
 | POST | `/api/users` | **public** — signup. Creates the Keycloak account **and** the Mongo profile, assigns realm role `CUSTOMER` |
-| GET | `/api/users` | Get all users |
-| GET | `/api/users/{id}` | Get user by ID — the **Keycloak user id** (the JWT `sub`), not a Mongo ObjectId |
-| PUT | `/api/users/{id}` | Update user by ID |
-| DELETE | `/api/users/{id}` | **Hard delete** — the Mongo document is removed (the Keycloak account is *not*) |
+| GET | `/api/users/me` | The caller's own profile — no id in the URL |
+| PUT | `/api/users/me` | Update the caller's own profile |
+| DELETE | `/api/users/me` | Delete the caller's own account |
+| GET | `/api/users` | **`ADMIN`** — list every user |
+| GET | `/api/users/{id}` | **`ADMIN`** — by **Keycloak user id** (the JWT `sub`), not a Mongo ObjectId |
+| PUT | `/api/users/{id}` | **`ADMIN`** — update by ID |
+| DELETE | `/api/users/{id}` | **`ADMIN`** — **hard delete**, removes the Mongo profile **and** the Keycloak account |
 
 `POST /api/users` accepts `username`, `password`, `firstName`, `lastName`,
 `email`, `phone`, `addressDto`. There is no `id` and no `role`: the id comes back
 from Keycloak, and the role is always `CUSTOMER`. `password` is write-only — it is
 accepted on the way in and never echoed back.
+
+**`UserResponse` carries no `role`.** It used to, and the value was written once
+at signup and never again — so promoting someone in the Keycloak console left the
+profile still reporting `CUSTOMER` for an actual admin. Keycloak is the system of
+record and nothing syncs backward, so a stored copy could only ever go stale. A
+client that wants roles reads `realm_access.roles` from its own token.
+
+**Delete removes both halves.** Mongo first, then Keycloak. Keycloak cannot join
+the transaction either way, so the question is which failure is recoverable:
+deleting Keycloak first and then failing leaves a profile nobody can log in as —
+unreachable *and* undeletable through this endpoint, since `findById` still
+succeeds but names a dead account. This order fails the other way, leaving an
+account with no profile, which is the state signup already knows how to
+compensate for and an admin can clear in the console. A failed Keycloak delete is
+logged loudly and not rethrown — the profile really is gone, so reporting failure
+would invite a retry that 404s.
+
+A duplicate signup answers **409** with Keycloak's own message
+(`{"detail":"User exists with same email"}`), not 502. Only a genuinely
+unreachable Keycloak is a 502.
 
 ### Order service
 
@@ -420,10 +583,23 @@ accepted on the way in and never echoed back.
 | GET | `/api/carts` | Get the current user's cart |
 | POST | `/api/carts` | Add an item to the cart |
 | DELETE | `/api/carts/items/{productId}` | Remove an item from the cart |
-| POST | `/api/orders` | Create an order from the cart, clears it |
+| POST | `/api/orders` | Create an order from the cart, clears it — **no body** |
+| GET | `/api/orders` | The caller's order history, newest first |
 
 No `X-User-ID` column any more — see [Authentication](#authentication). The
 gateway injects it from the token.
+
+`GET /api/orders` answers `200 []` for a user who has never ordered — an empty
+history is a successful answer to a valid question, not a 404. Like the cart
+routes it takes no id, so a caller cannot ask for anyone else's orders.
+
+**`productId` is a number everywhere.** It used to be a `String` in the cart DTOs
+and a `Long` on the product, which meant `GET /api/carts` returned
+`"productId":"1"` while `GET /api/products` returned `"id":1` — so
+`product.id === cartItem.productId` was always false in JavaScript. It is now
+`Long` from the DTO through the entity to the `bigint` column. A malformed id is
+rejected by Jackson at the framework boundary with a **400**, before any service
+code runs.
 
 ### Config-refresh demo endpoints — not routed
 
@@ -678,6 +854,26 @@ curl "http://localhost:8080/api/products/search?keyword=milk" \
 Sampling is `1.0` (trace everything), set in
 `configserver/src/main/resources/config/application.yml`.
 
+Zipkin is also a **Grafana datasource**, so traces and logs sit in one place.
+There is only ever **one** Zipkin — the container in the root `docker-compose.yml`
+— and the observability stack does not add a second; `grafana` simply joined
+`ecom-network` so the name resolves, the same way `prometheus` already does:
+
+```yaml
+# evaluate-prometheus/docker-compose.yaml — grafana
+    networks: [loki, ecom-network]
+# evaluate-prometheus/grafana/datasources/datasources.yml
+  - name: Zipkin
+    type: zipkin
+    url: http://zipkin:9411
+```
+
+The payoff over Zipkin's own UI is `tracesToLogsV2`: clicking a span jumps to the
+Loki logs carrying the same trace id, which Spring Boot already writes into every
+line as `[<traceId>-<spanId>]`. That link needs the explicit `uid: loki` on the
+Loki datasource — without one Grafana generates a random uid per install and the
+link breaks silently.
+
 ### Metrics — Prometheus + Grafana
 
 With the observability stack running:
@@ -829,18 +1025,38 @@ token fetched against a different hostname fails the issuer check even though th
 signature is valid — that is what `KC_HOSTNAME` pins.
 
 **`403` where you expected `200`**
-An authorization outcome, not an error, so nothing is logged anywhere. It is
-almost always the role name: check `docker logs ecom_gateway | grep "Extracted
-roles"`. If the list shows `ROLE_CUSTOMER`, the realm role was created with the
-prefix — the converter adds it, so the realm role must be plain `CUSTOMER`.
+An authorization outcome, not an error, so nothing is logged anywhere. Decode the
+token at jwt.io and read `realm_access.roles`, or raise the gateway converter to
+debug (`logging.level.com.ramesh.gateway.security=DEBUG`) for the
+`Extracted roles for sub …` line. Three causes, in order of likelihood: the role
+was never assigned; the token predates the assignment, because roles are baked in
+at issue time and a full logout is needed to get a new one; or the realm role was
+created as `ROLE_ADMIN` — the converter adds the prefix, so it must be plain
+`ADMIN` or you get `ROLE_ROLE_ADMIN`, which matches nothing.
 
-**Signup returns `502` with a Keycloak message**
-The message is the diagnosis, forwarded verbatim. `User exists with same email` is
-a duplicate. `invalid_client` or `unauthorized_client` means
+**Logged in as an admin but the nav shows no admin links**
+The token has no `ADMIN`. Same three causes as above — usually the second: log out
+fully rather than just reloading, since clearing local state leaves Keycloak's SSO
+cookie and the next login silently returns the same session.
+
+**Signup returns `409`, or `502`**
+They mean different things now. **`409`** is a duplicate — the body carries
+Keycloak's own message, `{"detail":"User exists with same email"}`. **`502`** is a
+genuine upstream problem: `invalid_client` or `unauthorized_client` means
 `KEYCLOAK_ADMIN_CLIENT_ID` / `KEYCLOAK_ADMIN_CLIENT_SECRET` do not match the
-`ecom-admin` client. `403` from the Admin API means the service account is missing
-`manage-users` or `view-realm`. `404` on the role means `CUSTOMER` was never
-created in the realm.
+`ecom-admin` client; a `403` from the Admin API means the service account is
+missing `manage-users` or `view-realm`; a `404` on the role means `CUSTOMER` was
+never created in the realm. Those three details stay in the user-service log
+rather than the response, because signup is the one anonymous route and the
+message contains the in-network admin URL. `docker logs ecom_user | grep Keycloak`.
+
+**The login page appears, the password works, and then nothing happens**
+The redirect lands on `:5173/?code=…` and the app never gets a token. Almost
+always Keycloak's **Web origins** — a separate field from redirect URIs, needed
+only by browsers, so Postman never revealed it missing. See
+[Keycloak setup](#keycloak-setup-one-time). Nothing appears in the Keycloak or
+gateway logs, because the blocked token request never reached either; the browser
+console is the only place it shows.
 
 **Signup works in Docker but fails from the IDE**
 `configserver/…/user-service.yml` defaults `client-id` to `ecom-admin-cli`, while
@@ -948,7 +1164,15 @@ ecom_microservices/
 ├── order/                 # order-service   — PostgreSQL, calls the other two,
 │                          #                   publishes OrderCreatedEvent to Kafka
 ├── notification/          # notification-service — Kafka consumer, no HTTP API
-├── evaluate-prometheus/   # Grafana + Prometheus + Loki + Alloy stack
+├── frontend/              # React + Vite SPA — NOT a compose service, `npm run dev`
+│   ├── .env               #   VITE_* addresses; committed, nothing secret
+│   └── src/
+│       ├── config.js      #   every URL the app knows, in one place
+│       ├── api/           #   one axios instance + interceptors
+│       ├── context/       #   CartProvider, ToastProvider
+│       ├── hooks/         #   useRoles — reads realm_access.roles
+│       └── pages/         #   incl. AdminUsers, AdminProducts
+├── evaluate-prometheus/   # Grafana + Prometheus + Loki + Alloy + Zipkin datasource
 ├── logs/                  # per-service log output — daily rotation, 7 days,
 │                          #   plain .log archives (mounted into Alloy)
 ├── docker-compose.yml     # main stack
@@ -974,6 +1198,9 @@ work, and the one thing that will break it.
 resilience and rate limiting, §21–§23 the three messaging iterations (RabbitMQ →
 Spring Cloud Stream → Kafka), and §24 the whole Keycloak story — including the
 id-resolution bug in §24.3 that is the most transferable thing in it.
+§26 covers the React front end and §27 the authorization work — roles enforced,
+`/me`, one type for `productId`, and the admin UI — written plainer than the rest
+and probably the best place to start.
 §25 is the one section that is not a change log entry: it explains the two
 outbound-HTTP client shapes in the codebase — the discovery-aware
 `@HttpExchange` clients in order-service versus the single-purpose Keycloak
