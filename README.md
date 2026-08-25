@@ -14,10 +14,9 @@ aggregation.
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
 - [**Quick start**](#quick-start) — the order to do things in
-- [Running on an older machine](#running-on-an-older-machine)
 - [Environment variables](#environment-variables)
 - [Running](#running)
-- [Keycloak setup (one-time)](#keycloak-setup-one-time)
+- [Keycloak setup (one-time)](#keycloak-setup-one-time) — why the setup looks like that
 - [Service URLs](#service-urls)
 - [Authentication](#authentication)
 - [Front end](#front-end)
@@ -126,64 +125,151 @@ Three kinds of call are in that picture, and the differences matter:
 - No local JDK or Maven needed — every service builds inside its own
   multi-stage Dockerfile
 
-**On older hardware**, see [Running on an older
-machine](#running-on-an-older-machine) before the first `up` — the MongoDB image
-is the one pin that may need changing.
+> **Note — older Linux machines.** MongoDB 8 will not start on some older
+> kernels. If `ecom_mongodb` exits immediately or never goes healthy, change the
+> `mongodb` service image in `docker-compose.yml` from
+> `mongodb/mongodb-community-server:8.0-ubi8` to **`mongo:7`**. Nothing else
+> changes — `mongo:7` takes the same `MONGO_INITDB_ROOT_*` variables, stores data
+> in the same `/data/db`, and ships `mongosh`, so the healthcheck works
+> unaltered, and user-service neither knows nor cares which image is behind
+> `mongodb:27017`.
+>
+> **One caveat:** that is a *downgrade*, and MongoDB refuses to start against a
+> data directory written by a newer release. On a machine that has already run
+> 8.x the container exits with a `featureCompatibilityVersion` error and the
+> volume has to go — `docker compose down`, `docker volume rm
+> ecom_microservices_mongo_data`, then up again. That destroys the Mongo user
+> profiles but **not** the Keycloak accounts, which live in `keycloak_db` in
+> Postgres; those accounts still log in and then 404 on every `/api/users/me` and
+> cart call. Either delete them in the Keycloak console and sign up again, or
+> start clean with `docker compose down -v`.
 
 ---
 
 ## Quick start
 
-The whole sequence, in order. Steps 1 and 3–6 are one-time setup; after that,
-starting the stack is just step 2.
+The whole sequence, in order, with nothing to skip back for. Steps 1 and 3 are
+one-time setup; after that, starting the stack is just step 2.
 
-**1. Create `.env` in the project root.** Copy the block from [Environment
-variables](#environment-variables). Leave `KEYCLOAK_ADMIN_CLIENT_SECRET` as a
-placeholder for now — Keycloak has not generated it yet, and nothing needs it
-until step 4.
+### 1. Create the two `.env` files
 
-**2. Start the stack.**
+There are **two**, they are different files, and they configure different things:
+
+| file | configures | copy the block from |
+|---|---|---|
+| `.env` — project root | the containers | [Environment variables](#environment-variables) |
+| `frontend/.env` | the browser app | [Front end → Environment variables](#environment-variables-1) |
+
+Leave `KEYCLOAK_ADMIN_CLIENT_SECRET` as a placeholder in the root file — Keycloak
+has not generated it yet, and step **3d** is where it gets filled in.
+
+Both are gitignored (the root `.gitignore` line `.env` matches at any depth), so
+neither one exists in a fresh clone.
+
+### 2. Start the stack
 
 ```bash
 docker compose up -d --build --wait
 ```
 
-About 90–120 seconds cold. What `--wait` does, and the startup order it enforces,
-is in [Running](#running).
+About 90–120 seconds cold. `--wait` blocks until every service with a healthcheck
+is healthy and exits non-zero if one fails; the startup order it enforces is in
+[Running](#running).
 
-**3. Configure Keycloak.** Console → http://localhost:8443, log in `admin` /
-`admin`. Create the realm `ecom-app`, two clients, and two realm roles — the full
-procedure with every field is in [Keycloak setup](#keycloak-setup-one-time).
-**Nothing here is imported automatically**, and it has to happen *after* step 2
-because the console does not exist until Keycloak is running.
+### 3. Configure Keycloak, then start the front end
 
-**4. Paste the client secret into `.env`, then recreate user-service.**
+Nothing below is imported automatically, and all of it has to happen *after*
+step 2 — the console does not exist until Keycloak is running.
 
-```bash
-# after setting KEYCLOAK_ADMIN_CLIENT_SECRET in .env
-docker compose up -d user-service
-```
+**a. Log in to the console.** http://localhost:8443, as `admin` / `admin`.
 
-**This is the step people miss.** Compose reads `.env` when a container is
-*created*, so a user-service that is already running keeps the old placeholder no
-matter how correct the file looks. The symptom is signup failing against Keycloak
-with the stack apparently healthy — the admin token is fetched lazily on the
-first `POST /api/users`, so nothing complains at startup.
+That is the **master** realm bootstrap admin, from `KC_BOOTSTRAP_ADMIN_USERNAME`
+and `KC_BOOTSTRAP_ADMIN_PASSWORD` in `docker-compose.yml`. It controls the entire
+Keycloak installation, and is a different thing from both clients below.
 
-**5. Sign up a user** — through the front end (step 7), or with [`POST
-/api/users`](#2-sign-up--the-one-call-that-needs-no-token). It is the one call
-that needs no token.
+**b. Create a permanent admin.** Still in **master**: Users → *Add user* →
+Credentials → set a password with *Temporary* **off** → Role mapping → *Assign
+role* → **switch the filter to "Filter by realm roles"** → `admin`.
 
-Do **not** create this user with the console's *Add user*. That makes a Keycloak
-account with no Mongo profile: it logs in fine, and then `GET /api/users/me` and
-every cart call return 404. Signup is what writes both halves.
+Log out and back in as the new account to prove it works. Then — **once all of
+step 3 is done**, because every sub-step below needs console access — delete the
+temporary one: Users → `admin` → Delete.
 
-**6. Promote it to `ADMIN`** if you want the admin screens — a console action,
-[step 5 of Keycloak setup](#keycloak-setup-one-time). Log out **fully** and back
-in afterwards, or the change is invisible: roles are baked into a token when it
-is issued.
+Worth doing because `admin`/`admin` is hard-coded in `docker-compose.yml` and so
+lives in the repository, and Keycloak 26 flags the session with a temporary-admin
+banner of its own accord. After the deletion `admin`/`admin` stops working, and
+every other mention of it in this README means the bootstrap account. Nothing is
+permanently lost either way: `docker compose down -v` drops `keycloak_db`, and
+Keycloak recreates the bootstrap admin on the next start.
 
-**7. Start the front end.** Separate terminal, not containerised:
+**c. Create the realm `ecom-app`.**
+
+**Every step from here on happens inside this realm.** Switch to it with the
+top-left dropdown, and check it on every screen. Configure the wrong realm and
+Keycloak does exactly what you asked, in `master`, with no error — the change
+simply has no effect on anything this stack does.
+
+**d. Client `ecom-admin`** — the provisioning client, confidential.
+
+| setting | value |
+|---|---|
+| Client ID | `ecom-admin` |
+| Client authentication | **On** (confidential) |
+| Service accounts roles | **On** |
+| Standard flow / Direct access grants | **Off** — it is not a login client |
+
+The client ID has to match `KEYCLOAK_ADMIN_CLIENT_ID` in `.env`, which is what
+`configserver/src/main/resources/config/user-service.yml` reads (defaulting to
+`ecom-admin`). Then, in order:
+
+1. **Service accounts roles** tab → *Assign role* → **Filter by clients** →
+   `realm-management` → assign **`manage-users`** and **`view-realm`**. The
+   filter toggle matters: those are *client* roles of `realm-management`, so the
+   default view does not list them at all.
+2. **Credentials** tab → copy the client secret → paste it into the root `.env`
+   as `KEYCLOAK_ADMIN_CLIENT_SECRET`.
+3. **Recreate user-service** so it picks the secret up:
+
+   ```bash
+   docker compose up -d user-service
+   ```
+
+   **This is the step people miss.** Compose reads `.env` when a container is
+   *created*, so a user-service that is already running keeps the old placeholder
+   no matter how correct the file looks. The symptom is signup failing against
+   Keycloak with the stack apparently healthy — the admin token is fetched lazily
+   on the first `POST /api/users`, so nothing complains at startup.
+
+**e. Create the realm roles `CUSTOMER` and `ADMIN`.** Realm roles → *Create role*,
+twice.
+
+**Without the `ROLE_` prefix** — the gateway's converter adds it. Naming the realm
+role `ROLE_CUSTOMER` produces `ROLE_ROLE_CUSTOMER`, which matches nothing and
+surfaces as a 403 with no error anywhere; see [Keycloak
+setup](#keycloak-setup-one-time).
+
+**f. Client `oauth2-pkce`** — the login client, public.
+
+| setting | value |
+|---|---|
+| Client ID | `oauth2-pkce` |
+| Client authentication | **Off** (public) |
+| Standard flow | **On** |
+| PKCE method | **S256** (Advanced tab) |
+| Valid redirect URIs | `https://oauth.pstmn.io/v1/callback` **and** `http://localhost:5173/*` |
+| Web origins | `http://localhost:5173` — **no wildcard, no trailing slash** |
+| Valid post logout redirect URIs | `http://localhost:5173` |
+| Direct access grants | On only while you need `grant_type=password` for curl/Postman — turn it **off** once the browser flow works |
+
+The client ID has to match `VITE_KEYCLOAK_CLIENT_ID` in `frontend/.env`.
+
+**Web origins is the field that bites.** Miss it and every *visible* step still
+works — the login page appears, the password is accepted, the browser lands back
+on `:5173/?code=…` — and then the silent token exchange is blocked, with nothing
+in any server log. [Keycloak setup](#keycloak-setup-one-time) explains why.
+
+**g. Start the front end.** A separate terminal; it is deliberately not a compose
+service.
 
 ```bash
 cd frontend
@@ -191,58 +277,35 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
-It needs its own `frontend/.env`, which is a different file from the root one —
-see [Front end](#front-end).
+**h. Sign up, then promote that user to `ADMIN`.** Sign up at
+http://localhost:5173/signup.
 
-**8. Or drive the API directly with Postman** — get a token as shown in [Getting
-a token](#getting-a-token), then work through [Testing the
-endpoints](#testing-the-endpoints).
+Do **not** create this user with the console's *Add user*. That makes a Keycloak
+account with no Mongo profile: it logs in fine, and then `GET /api/users/me` and
+every cart call return 404. Signup is what writes both halves.
 
-**Optional:** the [observability stack](#2-observability-stack-optional)
-(Prometheus + Grafana + Zipkin). Start it *after* the main stack — it joins that
-stack's network as an external network, so the network has to exist first.
+Then back to the console → realm **`ecom-app`** → Users → that user → **Role
+mapping** → *Assign role* → **Filter by realm roles** → `ADMIN`. **Log out fully
+and log in again**, or the change is invisible: roles are baked into a token when
+it is issued, and clearing local state is not enough — Keycloak's SSO cookie
+survives and hands back the same session.
+
+Verify with `GET /api/users`: `200` for an admin, `403` for a customer.
 
 ---
 
-## Running on an older machine
+**From here on, use the React app at http://localhost:5173** to create and manage
+users, products, carts and orders. The Keycloak console is only for the two
+things the app deliberately cannot do: promoting someone to `ADMIN`, and realm
+configuration.
 
-One pin in `docker-compose.yml` is worth knowing about before the first run:
+**Prefer Postman or curl?** Get a token as shown in [Getting a
+token](#getting-a-token), then work through [Testing the
+endpoints](#testing-the-endpoints).
 
-```yaml
-mongodb:
-  image: mongodb/mongodb-community-server:8.0-ubi8
-```
-
-MongoDB 8 does not start on some older Linux machines. If `ecom_mongodb` exits
-immediately or never goes healthy, drop to the official MongoDB 7 image:
-
-```yaml
-mongodb:
-  image: mongo:7
-```
-
-Nothing else changes — `mongo:7` takes the same `MONGO_INITDB_ROOT_*` variables,
-stores data in the same `/data/db`, and ships `mongosh`, so the healthcheck in
-`docker-compose.yml` works unaltered. user-service talks to it over the wire
-protocol and neither knows nor cares which image is behind `mongodb:27017`.
-
-**One caveat, and it is not optional:** this is a *downgrade*. MongoDB refuses to
-start against a data directory written by a newer release, so if the `mongo_data`
-volume already holds 8.x data the container will exit with a
-`featureCompatibilityVersion` error. On a fresh machine there is nothing to
-worry about. On a machine that has already run 8.x, the volume has to go:
-
-```bash
-docker compose down
-docker volume rm ecom_microservices_mongo_data
-docker compose up -d --build --wait
-```
-
-That destroys the user profiles in Mongo but **not** the Keycloak accounts, which
-live in `keycloak_db` in Postgres. The two halves are then out of step: those
-accounts can still log in, and every `/api/users/me` and cart call returns 404,
-exactly as in step 5 above. Either delete those users in the Keycloak console and
-sign up again, or start clean with `docker compose down -v`.
+**Optional — the observability stack** (Prometheus + Grafana + Zipkin).
+[Start it](#2-observability-stack-optional) *after* the main stack: it joins that
+stack's network as an external network, so the network has to exist first.
 
 ---
 
@@ -294,7 +357,7 @@ PGADMIN_DEFAULT_PASSWORD=admin
 
 - `KEYCLOAK_ADMIN_CLIENT_SECRET` is the only real secret here and it cannot be
   guessed or defaulted — Keycloak generates it. Get it from the console after
-  [the setup below](#keycloak-setup-one-time). Without it user-service starts
+  [step 3d of Quick start](#quick-start). Without it user-service starts
   fine and then fails on the first `POST /api/users`, because the admin token is
   fetched lazily.
 - **Kafka needs no variables.** Its listeners, KRaft settings and cluster id are
@@ -375,31 +438,16 @@ docker compose down -v       # …and delete volumes (DESTROYS all data,
 
 ## Keycloak setup (one-time)
 
+**The ordered procedure is [Quick start](#quick-start) step 3.** This section
+explains the parts of it that bite, and why they are the way they are.
+
 Keycloak is not preconfigured by an import file — the realm is created by hand and
 lives in Postgres (`keycloak_db`), so it survives `docker compose down` but **not**
-`down -v`. Start the stack first, then:
+`down -v`.
 
-Console → http://localhost:8443 — log in as `admin` / `admin`
-(`KC_BOOTSTRAP_ADMIN_*` in `docker-compose.yml`; this is the **master** realm
-admin, which is a different thing from the client below).
+### Redirect URIs and Web origins are different fields
 
-**1. Create the realm** `ecom-app`.
-
-**2. Client `oauth2-pkce`** — the login client, public.
-
-| setting | value |
-|---|---|
-| Client ID | `oauth2-pkce` |
-| Client authentication | **Off** (public) |
-| Standard flow | **On** |
-| PKCE method | **S256** (Advanced tab) |
-| Valid redirect URIs | `https://oauth.pstmn.io/v1/callback` **and** `http://localhost:5173/*` |
-| Web origins | `http://localhost:5173` — **no wildcard, no trailing slash** |
-| Valid post logout redirect URIs | `http://localhost:5173` |
-| Direct access grants | On only while you need `grant_type=password` for curl/Postman — turn it **off** once the browser flow works |
-
-**Redirect URIs and Web origins are different fields answering different
-questions**, and the second one is the one that bites:
+They answer different questions, and the second one is the one that bites:
 
 | field | checked by | question |
 |---|---|---|
@@ -416,52 +464,34 @@ Keycloak log or the gateway log, because the request never reached either.
 Note the format difference: the redirect URI needs the wildcard, Web origins must
 **not** have one — that field is compared against the `Origin` header verbatim.
 
-**3. Client `ecom-admin`** — the provisioning client, confidential.
+### Realm roles carry no `ROLE_` prefix
 
-| setting | value |
-|---|---|
-| Client ID | `ecom-admin` |
-| Client authentication | **On** (confidential) |
-| Service accounts roles | **On** |
-| Standard flow / Direct access grants | **Off** — it is not a login client |
+The gateway's converter adds it, so `hasRole("CUSTOMER")` matches the authority
+`ROLE_CUSTOMER`. Naming the realm role `ROLE_CUSTOMER` produces
+`ROLE_ROLE_CUSTOMER`, which matches nothing and surfaces as a 403 with no error
+anywhere. See `details.md` §24.4.
 
-Then: **Credentials** tab → copy the client secret into `.env`, and **Service
-accounts roles** → *Assign role* → **Filter by clients** → `realm-management` →
-assign **`manage-users`** and **`view-realm`**. The "filter by clients" toggle is
-the step people miss — those are client roles of `realm-management`, so the
-default "filter by realm roles" view does not list them.
+### Both role dialogs open on the wrong filter
 
-**4. Realm roles** — create `CUSTOMER` and `ADMIN`.
+Step 3 assigns roles on two different screens, and each one opens on the filter
+that hides what you came for — in opposite directions:
 
-**Without the `ROLE_` prefix.** The gateway's converter adds it, so
-`hasRole("CUSTOMER")` matches the authority `ROLE_CUSTOMER`. Naming the realm role
-`ROLE_CUSTOMER` produces `ROLE_ROLE_CUSTOMER`, which matches nothing and surfaces
-as a 403 with no error anywhere. See `details.md` §24.4.
+| screen | what you are assigning | switch the filter to |
+|---|---|---|
+| `ecom-admin` → Service accounts roles (3d) | `manage-users`, `view-realm` — **client** roles of `realm-management` | **Filter by clients** |
+| a user → Role mapping (3b, 3h) | `admin` in master, `ADMIN` in `ecom-app` — **realm** roles | **Filter by realm roles** |
 
-Promotion to `ADMIN` is a console action — Users → *user* → Role mapping. Signup
-always yields `CUSTOMER` and cannot request anything else; `UserRequest` has no
-`role` field. `details.md` §24.11 covers the other four ways roles can be
-assigned, including groups and default roles.
+Either way the role you want is simply absent from the list until you change the
+filter, which is where people conclude it does not exist.
 
-**5. Make an admin.** There is no API for this and there deliberately never will
-be — self-service promotion is privilege escalation, so the first `ADMIN` has to
-be console-made, the same circularity that forces signup to be `permitAll()`.
+### The first admin has to be made by hand
 
-1. **Sign up through the app first** (`/signup`, or `POST /api/users`). Do **not**
-   use the console's *Add user*: that creates a Keycloak account with no Mongo
-   profile, so the account logs in fine but `GET /api/users/me` and every cart
-   call return 404. Signup is what writes both halves.
-2. Console → realm **`ecom-app`** (top-left dropdown — every screen is silently
-   the wrong realm if you skip this) → Users → *that user* → **Role mapping** →
-   *Assign role*.
-3. **Switch the filter to "Filter by realm roles".** The dialog defaults to
-   *filter by clients*, and `ADMIN` is a realm role, so it does not appear until
-   you change it. This is where people conclude the role does not exist.
-4. **Log out fully and log in again.** Roles are baked into the token when it is
-   issued, so an existing token never gains one. Clearing local state is not
-   enough — Keycloak's SSO cookie survives and hands back the same session.
-
-Verify with `GET /api/users`: `200` for an admin, `403` for a customer.
+There is no API for promotion and there deliberately never will be — self-service
+promotion is privilege escalation, so the first `ADMIN` is a console action. It is
+the same circularity that forces signup to be `permitAll()`. Signup always yields
+`CUSTOMER` and cannot request anything else; `UserRequest` has no `role` field.
+`details.md` §24.11 covers the other four ways roles can be assigned, including
+groups and default roles.
 
 > Assigning a role in the console changes Keycloak and nothing else. That is
 > correct — Keycloak is the system of record for roles, and user-service stores no
@@ -593,7 +623,7 @@ npm install
 npm run dev          # http://localhost:5173
 ```
 
-The main stack must be up, and the Keycloak console steps above must be done, or
+The main stack must be up and [Quick start](#quick-start) step 3 must be done, or
 the login round trip fails at the token exchange.
 
 ### Environment variables
@@ -1357,7 +1387,7 @@ call it from inside the network with `docker exec`.
 **The Keycloak realm is gone after a restart**
 `docker compose down -v` deletes `postgres_data`, and the realm lives in
 `keycloak_db` inside it. Plain `down` keeps it. There is no realm import file, so
-the [setup](#keycloak-setup-one-time) has to be redone by hand — including a new
+[Quick start](#quick-start) step 3 has to be redone by hand — including a new
 client secret in `.env`.
 
 ---
