@@ -13,9 +13,11 @@ aggregation.
 - [Stack](#stack)
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
+- [**Quick start**](#quick-start) — the order to do things in
+- [Running on an older machine](#running-on-an-older-machine)
 - [Environment variables](#environment-variables)
-- [Keycloak setup (one-time)](#keycloak-setup-one-time)
 - [Running](#running)
+- [Keycloak setup (one-time)](#keycloak-setup-one-time)
 - [Service URLs](#service-urls)
 - [Authentication](#authentication)
 - [Front end](#front-end)
@@ -124,6 +126,124 @@ Three kinds of call are in that picture, and the differences matter:
 - No local JDK or Maven needed — every service builds inside its own
   multi-stage Dockerfile
 
+**On older hardware**, see [Running on an older
+machine](#running-on-an-older-machine) before the first `up` — the MongoDB image
+is the one pin that may need changing.
+
+---
+
+## Quick start
+
+The whole sequence, in order. Steps 1 and 3–6 are one-time setup; after that,
+starting the stack is just step 2.
+
+**1. Create `.env` in the project root.** Copy the block from [Environment
+variables](#environment-variables). Leave `KEYCLOAK_ADMIN_CLIENT_SECRET` as a
+placeholder for now — Keycloak has not generated it yet, and nothing needs it
+until step 4.
+
+**2. Start the stack.**
+
+```bash
+docker compose up -d --build --wait
+```
+
+About 90–120 seconds cold. What `--wait` does, and the startup order it enforces,
+is in [Running](#running).
+
+**3. Configure Keycloak.** Console → http://localhost:8443, log in `admin` /
+`admin`. Create the realm `ecom-app`, two clients, and two realm roles — the full
+procedure with every field is in [Keycloak setup](#keycloak-setup-one-time).
+**Nothing here is imported automatically**, and it has to happen *after* step 2
+because the console does not exist until Keycloak is running.
+
+**4. Paste the client secret into `.env`, then recreate user-service.**
+
+```bash
+# after setting KEYCLOAK_ADMIN_CLIENT_SECRET in .env
+docker compose up -d user-service
+```
+
+**This is the step people miss.** Compose reads `.env` when a container is
+*created*, so a user-service that is already running keeps the old placeholder no
+matter how correct the file looks. The symptom is signup failing against Keycloak
+with the stack apparently healthy — the admin token is fetched lazily on the
+first `POST /api/users`, so nothing complains at startup.
+
+**5. Sign up a user** — through the front end (step 7), or with [`POST
+/api/users`](#2-sign-up--the-one-call-that-needs-no-token). It is the one call
+that needs no token.
+
+Do **not** create this user with the console's *Add user*. That makes a Keycloak
+account with no Mongo profile: it logs in fine, and then `GET /api/users/me` and
+every cart call return 404. Signup is what writes both halves.
+
+**6. Promote it to `ADMIN`** if you want the admin screens — a console action,
+[step 5 of Keycloak setup](#keycloak-setup-one-time). Log out **fully** and back
+in afterwards, or the change is invisible: roles are baked into a token when it
+is issued.
+
+**7. Start the front end.** Separate terminal, not containerised:
+
+```bash
+cd frontend
+npm install
+npm run dev          # http://localhost:5173
+```
+
+It needs its own `frontend/.env`, which is a different file from the root one —
+see [Front end](#front-end).
+
+**8. Or drive the API directly with Postman** — get a token as shown in [Getting
+a token](#getting-a-token), then work through [Testing the
+endpoints](#testing-the-endpoints).
+
+**Optional:** the [observability stack](#2-observability-stack-optional)
+(Prometheus + Grafana + Zipkin). Start it *after* the main stack — it joins that
+stack's network as an external network, so the network has to exist first.
+
+---
+
+## Running on an older machine
+
+One pin in `docker-compose.yml` is worth knowing about before the first run:
+
+```yaml
+mongodb:
+  image: mongodb/mongodb-community-server:8.0-ubi8
+```
+
+MongoDB 8 does not start on some older Linux machines. If `ecom_mongodb` exits
+immediately or never goes healthy, drop to the official MongoDB 7 image:
+
+```yaml
+mongodb:
+  image: mongo:7
+```
+
+Nothing else changes — `mongo:7` takes the same `MONGO_INITDB_ROOT_*` variables,
+stores data in the same `/data/db`, and ships `mongosh`, so the healthcheck in
+`docker-compose.yml` works unaltered. user-service talks to it over the wire
+protocol and neither knows nor cares which image is behind `mongodb:27017`.
+
+**One caveat, and it is not optional:** this is a *downgrade*. MongoDB refuses to
+start against a data directory written by a newer release, so if the `mongo_data`
+volume already holds 8.x data the container will exit with a
+`featureCompatibilityVersion` error. On a fresh machine there is nothing to
+worry about. On a machine that has already run 8.x, the volume has to go:
+
+```bash
+docker compose down
+docker volume rm ecom_microservices_mongo_data
+docker compose up -d --build --wait
+```
+
+That destroys the user profiles in Mongo but **not** the Keycloak accounts, which
+live in `keycloak_db` in Postgres. The two halves are then out of step: those
+accounts can still log in, and every `/api/users/me` and cart call returns 404,
+exactly as in step 5 above. Either delete those users in the Keycloak console and
+sign up again, or start clean with `docker compose down -v`.
+
 ---
 
 ## Environment variables
@@ -195,6 +315,61 @@ PGADMIN_DEFAULT_PASSWORD=admin
 - `redis-server` needs no variable. It is fixed at `127.0.0.1:6379`, runs with
   persistence disabled, and exists only for the gateway's rate-limit token
   buckets, which are per-second state that *should* be lost on restart.
+
+---
+
+## Running
+
+### 1. Main stack
+
+```bash
+docker compose up -d --build --wait
+```
+
+- `--build` rebuilds each image from its Dockerfile
+- `--wait` blocks until every service with a healthcheck is healthy, and exits
+  non-zero if any fails
+
+Startup order is enforced by health-gated `depends_on`:
+
+```
+postgres ─── keycloak
+kafka ─────► config-server → eureka-server → { product, user, order, notification }
+                                           → cloud-gateway (also waits on redis-server)
+```
+
+**Kafka is now a root dependency.** It used to sit off to the side, needed only by
+order and notification; since Spring Cloud Bus moved onto it, config-server waits
+on it too — and nothing starts before config-server. A broken broker now blocks
+the whole stack instead of two services. That is the price of running one broker
+rather than two, and it is worth knowing before debugging a stack that will not
+start.
+
+user-service depends on Keycloak with plain `service_started`, not
+`service_healthy` — the admin token is fetched on the first signup, never at
+startup, so it does not need Keycloak up to boot. (Keycloak has no `healthcheck:`
+to wait on anyway, though `KC_HEALTH_ENABLED` is true and `/health/ready` is
+served on management port 9000.)
+
+A cold start takes roughly 90–120 seconds.
+
+### 2. Observability stack (optional)
+
+```bash
+docker compose -f evaluate-prometheus/docker-compose.yaml up -d
+```
+
+This stack joins the main stack's network as an **external network**, which is
+how Prometheus scrapes the services directly. Start the main stack first — the
+network has to exist.
+
+### Stopping
+
+```bash
+docker compose down          # stop and remove containers, keep data
+docker compose down -v       # …and delete volumes (DESTROYS all data,
+                             #  including the Keycloak realm)
+```
 
 ---
 
@@ -292,61 +467,6 @@ Verify with `GET /api/users`: `200` for an admin, `403` for a customer.
 > correct — Keycloak is the system of record for roles, and user-service stores no
 > copy of them (it used to, and the copy went stale the moment anyone used this
 > screen). The token's `realm_access.roles` is the only answer.
-
----
-
-## Running
-
-### 1. Main stack
-
-```bash
-docker compose up -d --build --wait
-```
-
-- `--build` rebuilds each image from its Dockerfile
-- `--wait` blocks until every service with a healthcheck is healthy, and exits
-  non-zero if any fails
-
-Startup order is enforced by health-gated `depends_on`:
-
-```
-postgres ─── keycloak
-kafka ─────► config-server → eureka-server → { product, user, order, notification }
-                                           → cloud-gateway (also waits on redis-server)
-```
-
-**Kafka is now a root dependency.** It used to sit off to the side, needed only by
-order and notification; since Spring Cloud Bus moved onto it, config-server waits
-on it too — and nothing starts before config-server. A broken broker now blocks
-the whole stack instead of two services. That is the price of running one broker
-rather than two, and it is worth knowing before debugging a stack that will not
-start.
-
-user-service depends on Keycloak with plain `service_started`, not
-`service_healthy` — the admin token is fetched on the first signup, never at
-startup, so it does not need Keycloak up to boot. (Keycloak has no `healthcheck:`
-to wait on anyway, though `KC_HEALTH_ENABLED` is true and `/health/ready` is
-served on management port 9000.)
-
-A cold start takes roughly 90–120 seconds.
-
-### 2. Observability stack (optional)
-
-```bash
-docker compose -f evaluate-prometheus/docker-compose.yaml up -d
-```
-
-This stack joins the main stack's network as an **external network**, which is
-how Prometheus scrapes the services directly. Start the main stack first — the
-network has to exist.
-
-### Stopping
-
-```bash
-docker compose down          # stop and remove containers, keep data
-docker compose down -v       # …and delete volumes (DESTROYS all data,
-                             #  including the Keycloak realm)
-```
 
 ---
 
