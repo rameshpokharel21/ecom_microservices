@@ -15,5 +15,6 @@ public class UserRequest {
     private String lastName;
     private String email;
     private String phone;
-    private AddressDto addressDto;
+    //Jackson uses the FIELD NAME as the JSON key, so this was "addressDto" on the wire.
+    private AddressDto address;
 }

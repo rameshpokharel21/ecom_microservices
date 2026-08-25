@@ -14,7 +14,7 @@ public class UserResponse {
     private String phone;
     //No role here either - a client that wants it reads realm_access.roles from its own
     //token, which cannot go stale the way a stored copy did.
-    private AddressDto addressDto;
+    private AddressDto address;
 
 
 

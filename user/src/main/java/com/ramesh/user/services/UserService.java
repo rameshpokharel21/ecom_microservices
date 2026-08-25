@@ -94,7 +94,7 @@ public class UserService {
                     userFromData.setLastName(userRequest.getLastName());
                     userFromData.setEmail(userRequest.getEmail());
                     userFromData.setPhone(userRequest.getPhone());
-                    userFromData.setAddress(userMapper.toAddress(userRequest.getAddressDto()));
+                    userFromData.setAddress(userMapper.toAddress(userRequest.getAddress()));
 
                     User savedUser = userRepository.save(userFromData);
                     return userMapper.toResponse(savedUser);

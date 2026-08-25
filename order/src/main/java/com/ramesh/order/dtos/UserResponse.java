@@ -14,7 +14,8 @@ public class UserResponse {
     private String email;
     private String phone;
     private UserRole role;
-    private AddressDto addressDto;
+    //Must match user-service's JSON key or Jackson leaves it null - renamed with it.
+    private AddressDto address;
 
 
 

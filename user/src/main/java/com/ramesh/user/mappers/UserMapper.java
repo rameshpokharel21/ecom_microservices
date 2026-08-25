@@ -19,13 +19,13 @@ public interface UserMapper {
     @Mapping(target = "id", ignore = true)
     @Mapping(target = "createdAt", ignore = true)
     @Mapping(target="updatedAt", ignore = true)
-    @Mapping(source="addressDto", target = "address")
+    //No @Mapping for address: DTO and entity now share the name, so MapStruct pairs them
+    //itself and routes the conversion through toAddress/toAddressDto below.
     User toEntity(UserRequest request);
 
 
     //User to UserResponse
     //no numberFormat on id: it is a Keycloak UUID string now, never a number.
-    @Mapping(source = "address", target = "addressDto")
     UserResponse toResponse(User user);
 
     //Address <-> AddressDto(all filed type/names same)
