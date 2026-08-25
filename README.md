@@ -705,7 +705,7 @@ All paths are relative to the gateway, **http://localhost:8080**. All require
 |---|---|---|
 | POST | `/api/users` | **public** — signup. Creates the Keycloak account **and** the Mongo profile, assigns realm role `CUSTOMER` |
 | GET | `/api/users/me` | The caller's own profile — no id in the URL |
-| PUT | `/api/users/me` | Update the caller's own profile |
+| PUT | `/api/users/me` | Update the caller's own profile — a **full replace**, see below |
 | DELETE | `/api/users/me` | Delete the caller's own account |
 | GET | `/api/users` | **`ADMIN`** — list every user |
 | GET | `/api/users/{id}` | **`ADMIN`** — by **Keycloak user id** (the JWT `sub`), not a Mongo ObjectId |
@@ -713,9 +713,17 @@ All paths are relative to the gateway, **http://localhost:8080**. All require
 | DELETE | `/api/users/{id}` | **`ADMIN`** — **hard delete**, removes the Mongo profile **and** the Keycloak account |
 
 `POST /api/users` accepts `username`, `password`, `firstName`, `lastName`,
-`email`, `phone`, `addressDto`. There is no `id` and no `role`: the id comes back
+`email`, `phone`, `address`. There is no `id` and no `role`: the id comes back
 from Keycloak, and the role is always `CUSTOMER`. `password` is write-only — it is
 accepted on the way in and never echoed back.
+
+**`PUT` is a full replace, and it writes MongoDB only.** `UserService.updateUser`
+assigns every field from the request, so any field the payload omits is stored as
+`null` — sending just `{"phone":"555"}` clears the name, email and address. It
+also never calls the Keycloak Admin API, so `firstName`, `lastName` and `email`
+would diverge from the account that issues the token. That is why the front end's
+profile form renders those three read-only and echoes them back unchanged; the
+address and phone are the only fields Keycloak does not own.
 
 **`UserResponse` carries no `role`.** It used to, and the value was written once
 at signup and never again — so promoting someone in the Keycloak console left the
@@ -862,7 +870,7 @@ curl -X POST http://localhost:8080/api/users \
     "lastName": "Mara",
     "email": "steve@example.com",
     "phone": "2828981433",
-    "addressDto": {
+    "address": {
       "street": "145 Main St",
       "city": "Louisville",
       "state": "KY",
