@@ -6533,7 +6533,7 @@ beans do not poll.
 
 ### 28.4 Side effects
 
-Five, in rough order of how likely they are to bite.
+Six, in rough order of how likely they are to bite.
 
 **1. It broke the Eureka client on every service.** The first `busrefresh`
 returned `500` and left config-server `unhealthy`:
@@ -6598,6 +6598,102 @@ keeps serving stale configuration.
 `ContextRefresher` is an HTTP call to config-server, and a broadcast makes them
 all do it at once. With four services this is invisible; it is a thundering herd
 in proportion to fleet size, against a single config-server.
+
+**6. Every Prometheus scrape logs a WARN, twice.** On every service with a Kafka
+binder:
+
+```
+o.a.k.c.c.internals.OffsetFetcherUtils : [Consumer clientId=consumer-anonymous.b582e8aa-…-3,
+  groupId=anonymous.b582e8aa-…] Not updating high watermark for partition
+  springCloudBus-0 as it is no longer assigned
+```
+
+Thousands of them — 4324 on product-service, which had been up longest. The
+wording invites the wrong conclusion. "High watermark" sounds like delivery
+bookkeeping; it is not. It is the log-end offset used to compute **consumer lag**
+for a metric, and nothing about message delivery touches this code path.
+
+The trigger is `scrape_interval: 5s` in `evaluate-prometheus/prometheus/prometheus.yml`.
+Confirmed by removing it rather than reasoning about it:
+
+| condition | warnings in 25 s |
+|---|---|
+| Prometheus stopped | **0** |
+| Prometheus running | **10** — two per scrape |
+
+The metric is `spring_cloud_stream_binder_kafka_offset`, and its label set names
+the culprit exactly:
+
+```
+topic=springCloudBus  group=anonymous.36b1a138-…  lag=0
+topic=springCloudBus  group=anonymous.b582e8aa-…  lag=0
+topic=springCloudBus  group=anonymous.f802bb1d-…  lag=0
+```
+
+Three series, all Bus, all anonymous — the same groups as side effect 2. `javap`
+on `spring-cloud-stream-binder-kafka-5.0.2.jar` gives the mechanism:
+
+```java
+private Map<String, Consumer<?,?>> metadataConsumers;
+private long findTotalTopicGroupLag(String, String, Map<String, Consumer<?,?>>);
+ScheduledExecutorService scheduler;
+```
+
+`KafkaBinderMetrics` keeps a **separate metadata consumer** purely to answer lag
+questions. It never subscribes, so it holds no assignment. Computing lag needs the
+end offset, so it issues a ListOffsets request; when the response lands,
+`OffsetFetcherUtils` goes to cache the high watermark against the partition's
+state, finds this consumer is not assigned that partition, discards the value and
+logs it. A consumer that exists only to ask a question is told it does not own the
+partition while answering it — correct behaviour, reported at the wrong level.
+
+That `scheduler`, created without a thread factory, is why the warning always
+carries `pool-4-thread-1` and never `container-0-C-1`, the thread that actually
+delivers messages. **The thread name is the tell**, and it is a good habit
+generally: a warning on a pool thread that does not carry your consumer's name is
+usually infrastructure talking about itself.
+
+**It is not exclusive to the Bus, and the difference is worth not tidying away.**
+notification-service logs the same warning against `order.exchange-0` and its
+named `notification` group — but roughly once a minute, not twice every five
+seconds, and its topic/group pair does not appear in the gauge above at all. The
+5-second cadence belongs to the anonymous Bus groups specifically; notification's
+slower one has some other trigger that was not chased down. The tempting rule
+("named groups are fine, anonymous ones are not") is contradicted by the logs, so
+it is not stated.
+
+Silenced at the source rather than by lowering scrape resolution, in both
+`config/application.yml` and config-server's own `application.yaml` (it cannot
+fetch configuration from itself — §28.2):
+
+```yaml
+logging:
+  level:
+    org.apache.kafka.clients.consumer.internals.OffsetFetcherUtils: ERROR
+```
+
+Worth noting against §28.3's refreshes/does-not table: **log levels do refresh.**
+`LoggingRebinder` listens for `EnvironmentChangeEvent` and re-applies
+`logging.level.*`, so this change propagates over the Bus without a restart —
+unlike the rolling policy in the same block, where the appender is built at
+startup. The two halves of one `logging:` block behave differently, which is worth
+knowing before assuming either way.
+
+**Applying it this way proved something the section had not.** The level was
+pushed with `busrefresh` instead of a rebuild, and thirty seconds later:
+
+| service | warnings in a clean 30 s window |
+|---|---|
+| config-server, product, user, order | **0** |
+| notification | **2** |
+
+notification-service has no `spring-cloud-starter-bus-kafka` (§28.1). It consumes
+the domain event and reads config at startup, but it is **not a Bus member**, so
+the refresh never reached it and it kept the old level until restarted. That is
+the Bus boundary drawn in one measurement: "push config to every service" means
+every service *on the Bus*, and the two sets are not the same here. It is also the
+first time in this document that boundary has cost anything, precisely because
+§28.1 left notification off the Bus as a deliberate non-change.
 
 ---
 
