@@ -1,7 +1,6 @@
 
 .env
 logs/
-details.md
 evaluate-prometheus/.data/*
 
 HELP.md
@@ -36,3 +35,4 @@ build/
 
 ### VS Code ###
 .vscode/
+.claude/
