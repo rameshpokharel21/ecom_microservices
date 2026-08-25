@@ -4,6 +4,8 @@ import { signup } from '../api/users'
 import { readMessage } from '../api/client'
 import ErrorBanner from '../components/ErrorBanner'
 
+const EMPTY_ADDRESS = { street: '', city: '', state: '', zipcode: '', country: '' }
+
 const EMPTY = {
   username: '',
   password: '',
@@ -11,6 +13,9 @@ const EMPTY = {
   firstName: '',
   lastName: '',
   phone: '',
+  // Nested under "address" to match UserRequest.address. Note "zipcode" is all
+  // lower-case on the Java side; zipCode silently maps to nothing.
+  address: { ...EMPTY_ADDRESS },
 }
 
 function Field({ label, name, value, onChange, type = 'text', required = true }) {
@@ -38,12 +43,19 @@ export default function Signup() {
 
   const onChange = (e) => setForm((f) => ({ ...f, [e.target.name]: e.target.value }))
 
+  const onAddressChange = (e) =>
+    setForm((f) => ({ ...f, address: { ...f.address, [e.target.name]: e.target.value } }))
+
   const onSubmit = async (e) => {
     e.preventDefault()
     setSubmitting(true)
     setError(null)
     try {
-      setCreated(await signup(form))
+      // The address is optional. Send it only if something was typed - otherwise drop
+      // the key entirely so the profile stores null rather than five empty strings.
+      const filled = Object.values(form.address).some((v) => v.trim() !== '')
+      const { address, ...rest } = form
+      setCreated(await signup(filled ? form : rest))
     } catch (err) {
       // user-service forwards Keycloak's own message, so a duplicate username reads as
       // "User exists with same username" rather than a bare 409.
@@ -101,6 +113,21 @@ export default function Signup() {
           <Field label="Last name" name="lastName" value={form.lastName} onChange={onChange} />
         </div>
         <Field label="Phone" name="phone" value={form.phone} onChange={onChange} required={false} />
+
+        <fieldset className="space-y-4 rounded-lg border border-slate-200 p-4">
+          <legend className="px-1 text-sm font-medium text-slate-700">
+            Address <span className="font-normal text-slate-400">(optional)</span>
+          </legend>
+          <Field label="Street" name="street" value={form.address.street} onChange={onAddressChange} required={false} />
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="City" name="city" value={form.address.city} onChange={onAddressChange} required={false} />
+            <Field label="State" name="state" value={form.address.state} onChange={onAddressChange} required={false} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Zip code" name="zipcode" value={form.address.zipcode} onChange={onAddressChange} required={false} />
+            <Field label="Country" name="country" value={form.address.country} onChange={onAddressChange} required={false} />
+          </div>
+        </fieldset>
 
         <button
           type="submit"
