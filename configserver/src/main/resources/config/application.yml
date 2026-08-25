@@ -77,6 +77,11 @@ eureka:
       enable: false
 
 logging:
+  #Silences a WARN the Prometheus scrape provokes twice per scrape - the binder's lag
+  #gauge asks for a high watermark through a consumer that holds no assignment. Metrics
+  #bookkeeping, never message delivery. See details.md §28.4.
+  level:
+    org.apache.kafka.clients.consumer.internals.OffsetFetcherUtils: ERROR
   file:
     name: logs/${spring.application.name}.log
   logback:

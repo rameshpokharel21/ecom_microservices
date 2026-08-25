@@ -49,6 +49,10 @@ management:
         include: "*"
 
 logging:
+  #Duplicated from config/application.yml - the config server cannot fetch config from
+  #itself, the same reason the block below is duplicated. See details.md §28.4.
+  level:
+    org.apache.kafka.clients.consumer.internals.OffsetFetcherUtils: ERROR
   file:
     name: logs/${spring.application.name}.log
   logback:
