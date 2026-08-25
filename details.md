@@ -76,6 +76,7 @@ overtaken carry a pointer forward at the point where they went stale.
 **Consolidation**
 
 - [§28. One broker — Spring Cloud Bus onto Kafka, and what a refresh really does](#28-one-broker--spring-cloud-bus-onto-kafka-and-what-a-refresh-really-does)
+- [§29. Address on the profile — three defects behind one missing form](#29-address-on-the-profile--three-defects-behind-one-missing-form)
 
 ---
 
@@ -6153,7 +6154,7 @@ Measured, not theorised — one user asking for another:
 ```
 GET /api/users/c3e7c457-…   as  def64c9c-…   ->  200
 {"email":"user1@example.com","phone":"555-0101",
- "addressDto":{"street":"1 Main St","city":"Springfield",…}}
+ "address":{"street":"1 Main St","city":"Springfield",…}}
 ```
 
 Name, email, phone, home address. `PUT` and `DELETE /{id}` had the same shape, so
@@ -6642,3 +6643,167 @@ Nothing stands in front of either except that the actuator port is unpublished
 except on loopback (§16.2). That was sufficient when the actuator held read-only
 information; it is doing more work now. Setting
 `spring.cloud.bus.env.enabled: false` costs nothing here, since nothing uses it.
+
+## 29. Address on the profile — three defects behind one missing form
+
+This section starts from a one-line question — why does signup at `:5173` not ask
+for an address? — and ends with three defects, one of which had been silently
+throwing data away since §26.
+
+---
+
+### 29.1 The form that was never built
+
+`Signup.jsx` collected six fields. The backend had supported an address the whole
+time:
+
+| layer | field |
+|---|---|
+| `UserRequest` | `AddressDto addressDto` |
+| `UserMapper` | `@Mapping(source="addressDto", target="address")` |
+| `User` entity | `Address address` |
+| `UserResponse` | `AddressDto addressDto` |
+
+Nothing was broken. The UI simply never sent the key, so **every account created
+through the browser had `address: null`**, and the §26 front end had no screen
+that could add one afterwards either — `users.js` exposed `signup`, `getProfile`,
+`listUsers` and `deleteUser`, and `PUT /api/users/me` from §27.3 had no caller at
+all. An endpoint with no client is indistinguishable from a missing endpoint.
+
+Fixed by adding an optional `<fieldset>` to signup and an edit mode to the profile
+page, both posting the same nested shape. One rule shared by both: **an address
+where every field is blank is dropped from the payload**, so the profile stores
+`null` rather than five empty strings — a distinction that matters the moment
+anything tries to format the address for display.
+
+---
+
+### 29.2 `zipCode` vs `zipcode` — the defect that hid itself
+
+`Profile.jsx` rendered the address like this:
+
+```js
+{address && (
+  <Row value={[address.street, address.city, address.state,
+               address.zipCode, address.country].filter(Boolean).join(', ')} />
+)}
+```
+
+Two things are wrong in three lines.
+
+**The field is `zipcode`, all lower case**, in both `AddressDto` classes.
+`address.zipCode` is `undefined`, `.filter(Boolean)` removes it, and the address
+renders as *"1 Main St, Louisville, KY, USA"* — complete-looking, correct-looking,
+and missing the postcode. No error, no warning, no gap in the output. JavaScript
+property access on a wrong key is not an error, and the very idiom that keeps the
+line tidy for genuinely absent parts is what disposes of the evidence.
+
+**And the `{address && …}` guard** meant a null address removed the row entirely
+rather than showing it empty. `Row` already renders an em dash for a falsy value,
+so the guard bought nothing and cost the ability to tell *"no address on file"*
+apart from *"this page does not show addresses"*. Both are gone now: the row is
+unconditional, and the key is spelled the way Java spells it.
+
+The general shape is worth naming, because it is not really about a typo:
+**a display layer that silently omits what it cannot find will hide its own
+bugs.** `filter(Boolean)` on hand-written keys is where that happens.
+
+---
+
+### 29.3 The DTO suffix had leaked into the public contract
+
+Jackson derives the JSON key from the **field name**, so `private AddressDto
+addressDto` put this on the wire:
+
+```json
+{ "username": "steve", "addressDto": { "street": "1 Main St" } }
+```
+
+The convention is that the `Dto` suffix names the **type**, not the field —
+`private AddressDto address` reads "an address, carried as a DTO", the same way
+one writes `List<String> names` rather than `namesList`. Renamed to `address`.
+
+**What did not change, because the layering was never the problem:** the `Address`
+entity, the `AddressDto` class, and the `toAddress` / `toAddressDto` mapper
+methods. Separate DTO types with mapper conversion is exactly right and is
+untouched here. The only casualty was the two `@Mapping` annotations, which
+existed *solely* because the names differed — MapStruct pairs same-named
+properties itself and still routes the conversion through those same two methods.
+Less annotation expressing the same mapping.
+
+The argument for caring: `AddressDto` is a **user-service implementation detail**.
+order-service has its own separate `AddressDto` class with its own package, and
+naming the wire key after one service's internal type asks every client to learn
+that vocabulary. The concrete proof is that `order/…/dtos/UserResponse.java` had
+to be renamed in the same commit — its copy is matched by name, so leaving it
+would have meant Jackson quietly binding `null` into a field nothing currently
+reads. A rename that fails silently in one service is a good argument for the
+rename being the correct one, and a better argument for doing it while only two
+services are involved.
+
+**This is a breaking wire change.** `README.md`, this document's §27.3 sample, and
+any saved Postman body all said `addressDto` and were updated with it.
+
+---
+
+### 29.4 `PUT` is a full replace, and Keycloak owns a name
+
+`UserService.updateUser` assigns every field from the request:
+
+```java
+userFromData.setFirstName(userRequest.getFirstName());
+userFromData.setLastName(userRequest.getLastName());
+userFromData.setEmail(userRequest.getEmail());
+userFromData.setPhone(userRequest.getPhone());
+userFromData.setAddress(userMapper.toAddress(userRequest.getAddress()));
+```
+
+That is a legitimate reading of `PUT` — it *should* replace the resource — but it
+means a partial payload is destructive. Measured, against a fully populated user:
+
+```
+PUT /api/users/me  {"phone":"9999999"}
+→ {"address":null,"email":null,"firstName":null,"lastName":null,"phone":"9999999"}
+```
+
+Four fields gone, `200 OK`. So the edit form sends **every** field it does not
+want cleared, including the ones it renders read-only.
+
+**Which raises the second question: which fields should be editable at all?**
+`updateUser` writes MongoDB and never calls the Keycloak Admin API. So an
+editable `firstName` / `lastName` / `email` would change the profile and not the
+account — the token would keep the old email, the Keycloak console would keep
+showing the old name, and the two would diverge permanently with nothing to
+reconcile them.
+
+That is precisely the failure §27.6 removed the stored `role` field for. Having
+just deleted one local copy of Keycloak-owned data, adding a UI that creates
+three more would be an odd thing to do. **Decision: name and email render
+read-only** (with a note saying where to change them), and phone plus address —
+the fields Keycloak has no opinion about — are editable.
+
+The honest cost is that the app cannot fix a typo'd surname; that needs the
+Keycloak console. The real fix is a `KeyCloakAdminService.updateUser` so both
+sides move together, which then inherits the whole compensating-transaction
+problem §24.7 and §25.8 already deal with for create and delete: Keycloak cannot
+join the Mongo transaction, so one of the two writes lands first and the other
+can fail. Deferred deliberately rather than overlooked.
+
+---
+
+### 29.5 Measured
+
+| check | result |
+|---|---|
+| signup with `"address"` | `201`, response carries all five fields **including `zipcode`** |
+| stored in Mongo | `address` embedded under the Keycloak UUID `_id`, no `role` key |
+| `GET /api/users/me` | returns the address |
+| `PUT` with a partial body | `200` and four fields nulled — the trap, confirmed |
+| `PUT` as the form sends it | every field preserved, address updated |
+| order flow after the rename | cart `201` → checkout `201` → `Received order created event for order: 8` |
+| order-service deserialization errors | none |
+
+**Not verified.** The browser half — the signup fieldset and the profile edit
+mode were driven through the API, not through the UI. And the front end has never
+been exercised against a token that lacks a profile, which is the state
+`docker volume rm mongo_data` leaves every existing Keycloak account in.
